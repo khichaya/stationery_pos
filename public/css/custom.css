@@ -1,0 +1,19 @@
+/* public/css/custom.css */
+
+/* جلب خط كيرو الاحترافي مباشرة من خوادم جوجل عبر الإنترنت */
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap');
+
+body, html, .btn, .form-control, h1, h2, h3, h4, h5, h6, .nav-link, span {
+    font-family: 'Cairo', sans-serif !important;
+}
+
+.login-card {
+    border-radius: 15px !important;
+    overflow: hidden;
+}
+
+/* تحسينات إضافية للمظهر */
+.form-control:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+}
