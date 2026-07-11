@@ -5,15 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>مكتبة السلام - النظام الداخلي</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <link rel="stylesheet" href="{{ asset('css/bootstrap.rtl.min.css') }}">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+      
+ 
+     <link rel="stylesheet" href="{{ asset('css/bootstrap.rtl.min.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/bootstrap-icons.css') }}">
     <link rel="stylesheet" href="{{ asset('css/custom.css') }}">
 
     <style>
+         @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_C_E.woff2') format('woff2');
+            font-weight: 400;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_M_E.woff2') format('woff2');
+            font-weight: 600;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_GTE.woff2') format('woff2');
+            font-weight: 700;
+            font-style: normal;
+        }
+* :not(.bi) {
+            font-family: 'Cairo', sans-serif !important;
+        }
+        /* تطبيق الخط كخيار أول أساسي في النظام */
+        body {
+            background-color: var(--bg);
+            font-family: 'Cairo', sans-serif !important;
+            -webkit-font-smoothing: antialiased;
+        }
+
         :root {
             --brand-1: #1e3a5f;
             --brand-2: #2c5f8a;
@@ -21,7 +47,6 @@
             --bg: #f4f6fa;
         }
 
-        * { font-family: 'Cairo', sans-serif; }
 
         body {
             background-color: var(--bg);
@@ -52,8 +77,9 @@
             margin-inline-end: 8px;
         }
 
-        .navbar-nav .nav-link {
-            font-weight: 600;
+       .navbar-nav .nav-link {
+            font-family: 'Cairo', sans-serif !important;
+            font-weight: 700 !important; /* لجعل التبويبات واضحة ومقروءة بشكل أنيق */
             font-size: .95rem;
             padding: .55rem 1rem !important;
             border-radius: 8px;
@@ -292,7 +318,7 @@
         {{ $slot ?? '' }}
     </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="{{ asset('js/bootstrap.bundle.min.js') }}"></script>
 
     @livewireScripts
     <livewire:schedule-heartbeat />

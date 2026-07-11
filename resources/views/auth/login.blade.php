@@ -5,23 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>تسجيل الدخول - مكتبة السلام</title>
 
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
+    
     <link rel="stylesheet" href="{{ asset('css/bootstrap.rtl.min.css') }}">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <link rel="stylesheet" href="{{ asset('css/bootstrap-icons.css') }}"> <!-- أصبح محلياً هنا -->
     <link rel="stylesheet" href="{{ asset('css/custom.css') }}">
 
     <style>
+         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap'); /* يبقى للاحتياط إذا اتصل الإنترنت */
+
+
         :root {
             --primary-navy: #0e3854;
             --accent-cyan: #0d7cb5;
             --magenta-purple: #872061;
         }
 
-        * { font-family: 'Cairo', sans-serif; }
+       @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_C_E.woff2') format('woff2');
+            font-weight: 400;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_M_E.woff2') format('woff2');
+            font-weight: 600;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_GTE.woff2') format('woff2');
+            font-weight: 700;
+            font-style: normal;
+        }
 
+        /* تطبيق الخط كخيار أول أساسي في النظام */
+        body {
+            font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif !important;
+        }
         html, body {
             height: 100%;
             margin: 0;

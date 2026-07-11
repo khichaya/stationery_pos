@@ -1,8 +1,29 @@
 /* public/css/custom.css */
 
 /* جلب خط كيرو الاحترافي مباشرة من خوادم جوجل عبر الإنترنت */
-@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700&display=swap');
+@font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_C_E.woff2') format('woff2');
+            font-weight: 400;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_M_E.woff2') format('woff2');
+            font-weight: 600;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Cairo';
+            src: url('/fonts/SLXGc1gnrNjO4Q3GcaIv_GTE.woff2') format('woff2');
+            font-weight: 700;
+            font-style: normal;
+        }
 
+        /* تطبيق الخط كخيار أول أساسي في النظام */
+        body {
+            font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif !important;
+        }
 body, html, .btn, .form-control, h1, h2, h3, h4, h5, h6, .nav-link, span {
     font-family: 'Cairo', sans-serif !important;
 }

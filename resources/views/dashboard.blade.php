@@ -40,8 +40,8 @@
         font-size: 1.1rem;
         margin-bottom: 1rem;
     }
-
-    .quick-btn {
+        
+     .quick-btn {
         border: none;
         border-radius: 12px;
         padding: 1.1rem .75rem;
@@ -272,7 +272,7 @@
 </div>
 
 {{-- 🚀 استدعاء سكريبت ومحرك الرسوم البيانية الذكي --}}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ asset('js/chart.js') }}"></script>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
     // 1. معالجة وحقن منحنى المبيعات (خطي)

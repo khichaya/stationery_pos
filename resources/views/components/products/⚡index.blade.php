@@ -655,8 +655,8 @@ new class extends Component
         </div>
     </div>
 
-    {{-- ====== مكتبة JsBarcode للباركود الحقيقي ====== --}}
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.12.3/dist/JsBarcode.all.min.js"></script>
+    {{-- ====== مكتبة JsBarcode  JsBarcode.all.min.js  للباركود الحقيقي ====== --}}
+    <script src="{{ asset('js/JsBarcode.all.min.js') }}"></script>
 
     <script>
     // ====== معاينة الصورة ======
