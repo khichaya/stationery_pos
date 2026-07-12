@@ -4,37 +4,52 @@ use Livewire\Component;
 use App\Models\Product;
 use App\Models\Customer;
 use App\Models\Sale;
+use App\Models\Favorite;
 use App\Models\InstitutionSetting;
 use Illuminate\Support\Facades\DB;
 
 new class extends Component
 {
     public $barcode = '';
-    public $suggestions = []; // 🆕 نتائج الاقتراح اللحظي أثناء الكتابة
-    public $highlightedIndex = -1; // 🆕 مؤشر العنصر المظلل حالياً بالأسهم
+    public $suggestions = [];
+    public $highlightedIndex = -1;
     public $cart = [];
     public $customers = [];
     public $selected_customer_id = null;
     public $discount_amount = 0;
     public $paid_amount = 0;
-    public $payment_method = 'full'; // full | partial | debt
+    public $payment_method = 'full';
 
     public $total_amount = 0;
     public $final_total = 0;
 
-    // إضافة سلعة يدوية (غير مسجلة بالمخزن)
+    // اضافة سلعة يدوية
     public $quick_item_name = '';
     public $quick_item_price = 0;
     public $quick_item_qty = 1;
 
-    // بيانات آخر فاتورة محفوظة (للطباعة)
+    // بيانات اخر فاتورة
     public $last_sale = null;
+
+    // ═══════════════════════════════════════════════
+    // خصائص نظام المفضلات
+    // ═══════════════════════════════════════════════
+    public $favorites = [];
+    public $showFavoritesManager = false;
+
+    // نموذج اضافة/تعديل مفضلة
+    public $fav_id = null;
+    public $fav_name = '';
+    public $fav_price = 0;
+    public $fav_icon = '📦';
+    public $fav_color = '#872061';
+    public $fav_sort_order = 0;
 
     public function mount()
     {
         $this->customers = Customer::all();
+        $this->loadFavorites();
 
-        // 🚀 التحديث: إذا كان الكاشير قادماً من صفحة الأرشيف بغرض التعديل، يتم شحن السلة فوراً هنا!
         if (session()->has('edit_cart')) {
             $this->cart = session()->get('edit_cart');
             $this->selected_customer_id = session()->get('edit_customer_id');
@@ -42,15 +57,138 @@ new class extends Component
             $this->payment_method = session()->get('edit_payment_method');
             $this->paid_amount = session()->get('edit_paid_amount');
 
+            // ═══════════════════════════════════════════════
+            // 🛠️ FIX: التأكد من وجود is_favorite و is_custom في كل عنصر
+            // ═══════════════════════════════════════════════
+            foreach ($this->cart as $key => &$item) {
+                $item['is_favorite'] = $item['is_favorite'] ?? false;
+                $item['is_custom'] = $item['is_custom'] ?? false;
+                $item['favorite_id'] = $item['favorite_id'] ?? null;
+            }
+            unset($item); // مهم: فك المرجع
+
             $this->calculateTotals();
 
             session()->forget(['edit_cart', 'edit_customer_id', 'edit_discount', 'edit_payment_method', 'edit_paid_amount']);
 
-            session()->flash('success', '🔄 تم شحن الفاتورة السابقة في السلة بنجاح! يمكنك الآن حذف سلع، تعديل كميات، أو إضافة سلع جديدة ثم الحفظ.');
+            session()->flash('success', '🔄 تم شحن الفاتورة السابقة في السلة بنجاح! يمكنك الان حذف سلع، تعديل كميات، او اضافة سلع جديدة ثم الحفظ.');
         }
     }
 
-    // 🆕 يُستدعى تلقائياً من Livewire في كل مرة يتغير فيها $barcode أثناء الكتابة
+    // ═══════════════════════════════════════════════
+    // دوال نظام المفضلات
+    // ═══════════════════════════════════════════════
+
+    public function loadFavorites()
+    {
+        $this->favorites = Favorite::activeOrdered();
+    }
+
+    public function addFavoriteToCart($favoriteId)
+    {
+        $favorite = Favorite::find($favoriteId);
+
+        if (!$favorite) {
+            session()->flash('error', 'العنصر المفضل غير موجود!');
+            return;
+        }
+
+        $key = 'f_' . $favorite->id . '_' . uniqid();
+
+        $this->cart[$key] = [
+            'key' => $key,
+            'product_id' => null,
+            'is_custom' => true,
+            'is_favorite' => true,
+            'favorite_id' => $favorite->id,
+            'name' => $favorite->name,
+            'price' => $favorite->price,
+            'quantity' => 1,
+            'subtotal' => $favorite->price,
+        ];
+
+        $this->calculateTotals();
+
+        session()->flash('success', '✨ تم اضافة "' . $favorite->name . '" من المفضلات للسلة!');
+    }
+
+    public function toggleFavoritesManager()
+    {
+        $this->showFavoritesManager = !$this->showFavoritesManager;
+        if ($this->showFavoritesManager) {
+            $this->resetFavoriteForm();
+        }
+    }
+
+    public function resetFavoriteForm()
+    {
+        $this->fav_id = null;
+        $this->fav_name = '';
+        $this->fav_price = 0;
+        $this->fav_icon = '📦';
+        $this->fav_color = '#872061';
+        $this->fav_sort_order = 0;
+    }
+
+    public function editFavorite($id)
+    {
+        $favorite = Favorite::find($id);
+        if (!$favorite) return;
+
+        $this->fav_id = $favorite->id;
+        $this->fav_name = $favorite->name;
+        $this->fav_price = $favorite->price;
+        $this->fav_icon = $favorite->icon;
+        $this->fav_color = $favorite->color;
+        $this->fav_sort_order = $favorite->sort_order;
+        $this->showFavoritesManager = true;
+    }
+
+    public function saveFavorite()
+    {
+        $this->validate([
+            'fav_name' => 'required|string|max:255',
+            'fav_price' => 'required|numeric|min:0',
+            'fav_icon' => 'nullable|string|max:10',
+            'fav_color' => 'required|string|max:7',
+            'fav_sort_order' => 'nullable|integer|min:0',
+        ], [
+            'fav_name.required' => 'اسم العنصر المفضل مطلوب.',
+            'fav_price.required' => 'السعر مطلوب.',
+        ]);
+
+        Favorite::updateOrCreate(
+            ['id' => $this->fav_id],
+            [
+                'name' => $this->fav_name,
+                'price' => $this->fav_price,
+                'icon' => $this->fav_icon ?: '📦',
+                'color' => $this->fav_color,
+                'sort_order' => $this->fav_sort_order ?: 0,
+                'is_active' => true,
+            ]
+        );
+
+        $this->resetFavoriteForm();
+        $this->loadFavorites();
+
+        session()->flash('success', $this->fav_id ? '✏️ تم تحديث العنصر المفضل!' : '➕ تم اضافة عنصر مفضل جديد!');
+    }
+
+    public function deleteFavorite($id)
+    {
+        $favorite = Favorite::find($id);
+        if ($favorite) {
+            $favorite->delete();
+            $this->loadFavorites();
+            session()->flash('success', '🗑️ تم حذف العنصر المفضل.');
+        }
+    }
+
+    // ═══════════════════════════════════════════════
+    // دوال البحث والسلة (كما هي)
+    // ═══════════════════════════════════════════════
+
     public function updatedBarcode()
     {
         $term = trim($this->barcode);
@@ -68,25 +206,21 @@ new class extends Component
             ->get(['id', 'name', 'barcode', 'price_1', 'current_stock'])
             ->toArray();
 
-        // 🆕 نُظلّل أول عنصر تلقائياً حتى يمكن الإضافة بـ Enter مباشرة بدون أسهم إن أراد المستخدم
         $this->highlightedIndex = count($this->suggestions) > 0 ? 0 : -1;
     }
 
-    // 🆕 التنقل لأسفل في قائمة الاقتراحات
     public function highlightNext()
     {
         if (count($this->suggestions) === 0) return;
         $this->highlightedIndex = min($this->highlightedIndex + 1, count($this->suggestions) - 1);
     }
 
-    // 🆕 التنقل لأعلى في قائمة الاقتراحات
     public function highlightPrev()
     {
         if (count($this->suggestions) === 0) return;
         $this->highlightedIndex = max($this->highlightedIndex - 1, 0);
     }
 
-    // 🆕 يُستدعى عند الضغط على سلعة من قائمة الاقتراحات مباشرة بالماوس (اختياري، بجانب الأسهم)
     public function selectSuggestion($productId)
     {
         $product = Product::find($productId);
@@ -103,14 +237,11 @@ new class extends Component
 
     public function scanBarcode()
     {
-        // 🆕 دوبل إنتر = بيع مباشر: لو الحقل فاضي أصلاً ومفيش اقتراحات، يبقى المستخدم ضغط
-        // Enter ثانية بعد ما فرّغ الحقل تلقائياً من إضافة سابقة -> ننفّذ البيع فوراً
         if (empty($this->barcode) && count($this->suggestions) === 0) {
             $this->checkout();
             return;
         }
 
-        // 🆕 لو فيه قائمة اقتراحات ظاهرة وعنصر مظلل، Enter تضيفه مباشرة (بدون حاجة لضغط مزدوج)
         if (count($this->suggestions) > 0 && $this->highlightedIndex >= 0) {
             $selected = $this->suggestions[$this->highlightedIndex] ?? null;
 
@@ -130,7 +261,6 @@ new class extends Component
 
         if (empty($this->barcode)) return;
 
-        // احتياطي: بحث دقيق عن الباركود التام (حالة عدم ظهور أي اقتراحات لأي سبب)
         $product = Product::where('barcode', $this->barcode)
                           ->orWhere('box_barcode', $this->barcode)
                           ->first();
@@ -138,7 +268,7 @@ new class extends Component
         if ($product) {
             $this->addToCart($product);
         } else {
-            session()->flash('error', 'السلعة غير موجودة! يمكنك إضافتها يدوياً من الزر أدناه.');
+            session()->flash('error', 'السلعة غير موجودة! يمكنك اضافتها يدوياً من الزر ادناه.');
         }
 
         $this->barcode = '';
@@ -168,6 +298,7 @@ new class extends Component
                 'key' => $key,
                 'product_id' => $product->id,
                 'is_custom' => false,
+                'is_favorite' => false,
                 'name' => $name,
                 'price' => $price,
                 'quantity' => $qtyToIncrement,
@@ -185,8 +316,8 @@ new class extends Component
             'quick_item_price' => 'required|numeric|min:0',
             'quick_item_qty' => 'required|integer|min:1',
         ], [
-            'quick_item_name.required' => 'يرجى كتابة اسم السلعة أو الخدمة.',
-            'quick_item_price.required' => 'يرجى إدخال السعر.',
+            'quick_item_name.required' => 'يرجى كتابة اسم السلعة او الخدمة.',
+            'quick_item_price.required' => 'يرجى ادخال السعر.',
         ]);
 
         $key = 'c_' . uniqid();
@@ -195,6 +326,7 @@ new class extends Component
             'key' => $key,
             'product_id' => null,
             'is_custom' => true,
+            'is_favorite' => false,
             'name' => $this->quick_item_name,
             'price' => $this->quick_item_price,
             'quantity' => $this->quick_item_qty,
@@ -209,7 +341,6 @@ new class extends Component
         $this->dispatch('close-modal', modalId: 'quickItemModal');
     }
 
-    // 🆕 الآن تُستدعى في كل ضغطة زر (wire:input) بدل الانتظار للخروج من الخانة (wire:change)
     public function updateQuantity($key, $qty)
     {
         if (!array_key_exists($key, $this->cart)) return;
@@ -255,12 +386,12 @@ new class extends Component
         }
 
         if (in_array($this->payment_method, ['partial', 'debt']) && !$this->selected_customer_id) {
-            session()->flash('error', 'يجب اختيار الزبون عند وجود دين (دفع جزئي أو دين كامل).');
+            session()->flash('error', 'يجب اختيار الزبون عند وجود دين (دفع جزئي او دين كامل).');
             return;
         }
 
         if ($this->payment_method === 'partial' && $this->paid_amount >= $this->final_total) {
-            session()->flash('error', 'المبلغ المدفوع في "الدفع الجزئي" يجب أن يكون أقل من الإجمالي.');
+            session()->flash('error', 'المبلغ المدفوع في "الدفع الجزئي" يجب ان يكون اقل من الاجمالي.');
             return;
         }
 
@@ -346,11 +477,11 @@ new class extends Component
             $this->reset(['cart', 'total_amount', 'final_total', 'discount_amount', 'paid_amount', 'selected_customer_id', 'payment_method']);
             $this->payment_method = 'full';
 
-            session()->flash('success', 'تم حفظ الفاتورة بنجاح وترحيل المستحقات الماليّة لجداول الديون!');
+            session()->flash('success', 'تم حفظ الفاتورة بنجاح وترحيل المستحقات المالية لجداول الديون!');
 
         } catch (\Exception $e) {
             DB::rollBack();
-            session()->flash('error', 'حدث خطأ أثناء معالجة العملية: ' . $e->getMessage());
+            session()->flash('error', 'حدث خطأ اثناء معالجة العملية: ' . $e->getMessage());
         }
     }
 };
@@ -369,13 +500,13 @@ new class extends Component
             </div>
         @endif
 
-        {{-- إشعار الفاتورة الأخيرة + أزرار الطباعة --}}
+        {{-- اشعار الفاتورة الاخيرة + ازرار الطباعة --}}
         @if ($last_sale)
             <div class="col-12">
                 <div class="card border-success mb-3 shadow-sm">
                     <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
                         <div class="small">
-                            🧾 فاتورة محفوظة بنجاح <b>#{{ $last_sale['id'] }}</b> — الإجمالي الحركي:
+                            🧾 فاتورة محفوظة بنجاح <b>#{{ $last_sale['id'] }}</b> — الاجمالي الحركي:
                             <b class="text-success">{{ number_format($last_sale['final_total'], 2) }} دج</b>
                             @if($last_sale['debt'] > 0)
                                 <span class="badge bg-danger ms-1">تم قيد دين تلقائي: {{ number_format($last_sale['debt'], 2) }} دج للزبون</span>
@@ -396,13 +527,18 @@ new class extends Component
             <div class="card mb-3 shadow-sm">
                 <div class="card-body bg-light">
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <label class="mb-0 fw-bold text-dark">🔍 مسح وقراءة الباركود (امسح قطعة أو كرتونة واضغط Enter)</label>
-                        <button type="button" class="btn btn-sm btn-outline-primary fw-bold" data-bs-toggle="modal" data-bs-target="#quickItemModal">
-                            ➕ خدمة / مبيعات سريعة يدوية
-                        </button>
+                        <label class="mb-0 fw-bold text-dark">🔍 مسح وقراءة الباركود (امسح قطعة او كرتونة واضغط Enter)</label>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary fw-bold" data-bs-toggle="modal" data-bs-target="#quickItemModal">
+                                ➕ خدمة / مبيعات سريعة يدوية
+                            </button>
+                            {{-- زر ادارة المفضلات --}}
+                            <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-outline-danger fw-bold">
+                                ⭐ ادارة المفضلات
+                            </button>
+                        </div>
                     </div>
 
-                    {{-- 🆕 حاوية نسبية لعرض قائمة الاقتراحات أسفل حقل البحث --}}
                     <div class="position-relative">
                         <input type="text"
                                wire:model.live="barcode"
@@ -410,11 +546,10 @@ new class extends Component
                                wire:keydown.arrow-down.prevent="highlightNext"
                                wire:keydown.arrow-up.prevent="highlightPrev"
                                class="form-control form-control-lg text-start font-monospace"
-                               placeholder="امسح بالليزر أو اكتب هنا للبحث السريع..."
+                               placeholder="امسح بالليزر او اكتب هنا للبحث السريع..."
                                autocomplete="off"
                                autofocus>
 
-                        {{-- 🆕 قائمة الاقتراحات اللحظية - تنقل بالأسهم (↑ ↓) وإضافة بـ Enter --}}
                         @if (count($suggestions) > 0)
                             <div class="list-group position-absolute w-100 shadow-lg" style="z-index: 1050; max-height: 320px; overflow-y: auto;">
                                 @foreach ($suggestions as $index => $product)
@@ -439,9 +574,125 @@ new class extends Component
                             </div>
                         @endif
                     </div>
-                    <p class="text-muted small mt-1 mb-0">💡 اكتب اسم أو رمز السلعة، تنقّل بالأسهم <kbd>↑</kbd> <kbd>↓</kbd> بين النتائج، ثم اضغط <kbd>Enter</kbd> لإضافة العنصر المظلل مباشرة للسلة.</p>
+                    <p class="text-muted small mt-1 mb-0">💡 اكتب اسم او رمز السلعة، تنقّل بالاسهم <kbd>↑</kbd> <kbd>↓</kbd> بين النتائج، ثم اضغط <kbd>Enter</kbd> لاضافة العنصر المظلل مباشرة للسلة.</p>
                 </div>
             </div>
+
+            {{-- ═══════════════════════════════════════════════ --}}
+            {{-- قسم المفضلات - مربعات سريعة الاضافة --}}
+            {{-- ═══════════════════════════════════════════════ --}}
+            @if (count($favorites) > 0)
+                <div class="card mb-3 shadow-sm border-0">
+                    <div class="card-header bg-white border-0 py-2 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0 text-danger">
+                            ⭐ السلع والخدمات المفضلة (غير المخزنة)
+                            <span class="small text-muted fw-normal">— اضغط + لاضافة للسلة فوراً</span>
+                        </h6>
+                        <span class="badge bg-danger-subtle text-danger">{{ count($favorites) }} عنصر</span>
+                    </div>
+                    <div class="card-body pt-0">
+                        <div class="row g-2">
+                            @foreach ($favorites as $fav)
+                                <div class="col-6 col-sm-4 col-md-3">
+                                    <div class="favorite-card" style="--fav-color: {{ $fav->color }}">
+                                        <div class="favorite-icon">{{ $fav->icon }}</div>
+                                        <div class="favorite-name">{{ $fav->name }}</div>
+                                        <div class="favorite-price">{{ number_format($fav->price, 2) }} دج</div>
+                                        <button type="button"
+                                                wire:click="addFavoriteToCart({{ $fav->id }})"
+                                                class="favorite-add-btn"
+                                                title="اضافة للسلة">
+                                            <span>+</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                </div>
+            @endif
+
+            {{-- ═══════════════════════════════════════════════ --}}
+            {{-- نافذة ادارة المفضلات --}}
+            {{-- ═══════════════════════════════════════════════ --}}
+            @if ($showFavoritesManager)
+                <div class="card mb-3 shadow-sm border-danger">
+                    <div class="card-header bg-danger text-white py-2 d-flex justify-content-between align-items-center">
+                        <h6 class="fw-bold mb-0">⭐ ادارة المفضلات</h6>
+                        <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-light">✕ اغلاق</button>
+                    </div>
+                    <div class="card-body">
+                        {{-- نموذج اضافة/تعديل --}}
+                        <div class="row g-2 mb-3 p-2 bg-light rounded-3">
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">الاسم <span class="text-danger">*</span></label>
+                                <input type="text" wire:model="fav_name" class="form-control form-control-sm" placeholder="مثال: فوتوكوبي">
+                                @error('fav_name') <span class="text-danger small">{{ $message }}</span> @enderror
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small fw-bold">السعر <span class="text-danger">*</span></label>
+                                <input type="number" step="0.01" wire:model="fav_price" class="form-control form-control-sm text-center" min="0">
+                                @error('fav_price') <span class="text-danger small">{{ $message }}</span> @enderror
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small fw-bold">ايقونة</label>
+                                <input type="text" wire:model="fav_icon" class="form-control form-control-sm text-center" placeholder="📦" maxlength="2">
+                            </div>
+                            <div class="col-md-2">
+                                <label class="form-label small fw-bold">اللون</label>
+                                <input type="color" wire:model="fav_color" class="form-control form-control-sm" style="height: 31px; padding: 2px;">
+                            </div>
+                            <div class="col-md-1">
+                                <label class="form-label small fw-bold">الترتيب</label>
+                                <input type="number" wire:model="fav_sort_order" class="form-control form-control-sm text-center" min="0">
+                            </div>
+                            <div class="col-md-2 d-flex align-items-end">
+                                <button type="button" wire:click="saveFavorite" class="btn btn-danger btn-sm w-100 fw-bold">
+                                    {{ $fav_id ? '✏️ تحديث' : '➕ اضافة' }}
+                                </button>
+                            </div>
+                        </div>
+
+                        {{-- جدول المفضلات --}}
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover align-middle text-center small mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>#</th>
+                                        <th>الايقونة</th>
+                                        <th class="text-start">الاسم</th>
+                                        <th>السعر</th>
+                                        <th>اللون</th>
+                                        <th>الترتيب</th>
+                                        <th>الاجراءات</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @forelse ($favorites as $fav)
+                                        <tr>
+                                            <td>{{ $fav->id }}</td>
+                                            <td style="font-size: 1.3rem;">{{ $fav->icon }}</td>
+                                            <td class="text-start fw-bold">{{ $fav->name }}</td>
+                                            <td class="font-monospace">{{ number_format($fav->price, 2) }} دج</td>
+                                            <td>
+                                                <span class="color-preview" style="background: {{ $fav->color }};"></span>
+                                                <span class="small text-muted">{{ $fav->color }}</span>
+                                            </td>
+                                            <td>{{ $fav->sort_order }}</td>
+                                            <td>
+                                                <button type="button" wire:click="editFavorite({{ $fav->id }})" class="btn btn-sm btn-outline-primary py-0 px-2">✏️</button>
+                                                <button type="button" wire:click="deleteFavorite({{ $fav->id }})" onclick="return confirm('هل انت متأكد من الحذف؟')" class="btn btn-sm btn-outline-danger py-0 px-2">🗑️</button>
+                                            </td>
+                                        </tr>
+                                    @empty
+                                        <tr><td colspan="7" class="text-muted py-3">لا توجد مفضلات مسجلة بعد</td></tr>
+                                    @endforelse
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            @endif
         </div>
 
         <div class="col-md-5">
@@ -462,16 +713,18 @@ new class extends Component
                         </thead>
                         <tbody>
                             @forelse ($cart as $key => $item)
-                                <tr class="{{ $item['is_custom'] ? 'table-warning' : '' }}">
+                                <tr class="{{ ($item['is_custom'] ?? false) ? 'table-warning' : '' }}">
                                     <td class="text-start fw-bold text-dark">
                                         {{ $item['name'] }}
-                                        @if($item['is_custom'])
+                                        {{-- 🛠️ FIX: استخدام ?? false بدلاً من الوصول المباشر --}}
+                                        @if($item['is_favorite'] ?? false)
+                                            <span class="badge bg-danger text-white text-xs ms-1">⭐ مفضل</span>
+                                        @elseif($item['is_custom'] ?? false)
                                             <span class="badge bg-warning text-dark text-xs ms-1">يدوي</span>
                                         @endif
                                     </td>
                                     <td class="font-monospace">{{ number_format($item['price'], 2) }}</td>
                                     <td style="max-width:85px">
-                                        {{-- 🆕 wire:input بدل wire:change: يحسب الإجمالي أثناء الكتابة مباشرة وليس بعد الخروج من الخانة --}}
                                         <input type="number"
                                                value="{{ $item['quantity'] }}"
                                                wire:input.debounce.150ms="updateQuantity('{{ $key }}', $event.target.value)"
@@ -484,7 +737,7 @@ new class extends Component
                                 </tr>
                             @empty
                                 <tr>
-                                    <td colspan="5" class="text-muted p-3">السلة فارغة، قم بمسح السلع للبدء.</td>
+                                    <td colspan="5" class="text-muted p-3">السلة فارغة، قم بمسح السلع او اختر من المفضلات للبدء.</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -521,7 +774,7 @@ new class extends Component
                             <label class="btn btn-outline-danger btn-sm fw-bold" for="pay_debt">📕 دين كامل (كريدي)</label>
                         </div>
                         @if(in_array($payment_method, ['partial', 'debt']) && !$selected_customer_id)
-                            <div class="text-danger small mt-2 fw-bold animate-pulse">⚠️ نظام الأمان: يجب تحديد كرت حساب الزبون لترحيل هذا الدين إليه!</div>
+                            <div class="text-danger small mt-2 fw-bold animate-pulse">⚠️ نظام الامان: يجب تحديد كرت حساب الزبون لترحيل هذا الدين اليه!</div>
                         @endif
                     </div>
 
@@ -551,19 +804,19 @@ new class extends Component
                     </div>
 
                     <button wire:click="checkout" class="btn btn-primary w-100 btn-lg fw-bold py-2 shadow-sm">
-                        💾 ⚡ إنهاء الفاتورة والترحيل الفوري
+                        💾 ⚡ انهاء الفاتورة والترحيل الفوري
                     </button>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- نافذة إضافة سلعة يدوية --}}
+    {{-- نافذة اضافة سلعة يدوية --}}
     <div wire:ignore.self class="modal fade" id="quickItemModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-sm">
             <div class="modal-content">
                 <div class="modal-header py-2">
-                    <h6 class="fw-bold mb-0">➕ إضافة سلعة سريعة بالفاتورة</h6>
+                    <h6 class="fw-bold mb-0">➕ اضافة سلعة سريعة بالفاتورة</h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -585,8 +838,8 @@ new class extends Component
                     </div>
                 </div>
                 <div class="modal-footer p-2">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">إلغاء</button>
-                    <button type="button" wire:click="addQuickItem" class="btn btn-primary btn-sm fw-bold">إدراج بالسلة</button>
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">الغاء</button>
+                    <button type="button" wire:click="addQuickItem" class="btn btn-primary btn-sm fw-bold">ادراج بالسلة</button>
                 </div>
             </div>
         </div>
@@ -608,6 +861,104 @@ new class extends Component
         });
     </script>
 
-    {{-- 🆕 سكربت الطباعة نُقل لملف خارجي منفصل لتقليل حجم هذا الملف --}}
     <script src="{{ asset('js/print-invoice.js') }}"></script>
+
+    {{-- ═══════════════════════════════════════════════ --}}
+    {{-- انماط CSS خاصة ببطاقات المفضلات --}}
+    {{-- ═══════════════════════════════════════════════ --}}
+    <style>
+        /* بطاقة المفضلة */
+        .favorite-card {
+            position: relative;
+            background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+            border: 2px solid var(--fav-color, #872061);
+            border-radius: 12px;
+            padding: 12px 8px 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            height: 100%;
+            min-height: 110px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        .favorite-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+            border-color: var(--fav-color, #872061);
+        }
+        .favorite-card:active {
+            transform: scale(0.97);
+        }
+        .favorite-icon {
+            font-size: 1.8rem;
+            margin-bottom: 4px;
+            line-height: 1;
+        }
+        .favorite-name {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #333;
+            line-height: 1.2;
+            margin-bottom: 2px;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .favorite-price {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--fav-color, #872061);
+            font-family: monospace;
+        }
+        .favorite-add-btn {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: var(--fav-color, #872061);
+            color: #fff;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            font-weight: bold;
+            line-height: 1;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            z-index: 2;
+        }
+        .favorite-add-btn:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+        }
+        .favorite-add-btn span {
+            display: block;
+            margin-top: -1px;
+        }
+
+        /* معاينة اللون في الجدول */
+        .color-preview {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        /* شارة المفضلة في السلة */
+        .badge.bg-danger.text-white {
+            background: linear-gradient(135deg, #e74c3c, #c0392b) !important;
+        }
+    </style>
 </div>

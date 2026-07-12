@@ -70,7 +70,7 @@ new class extends Component
 
         <div class="col-md-3">
             <div class="card border-0 shadow-sm rounded-4 p-3 text-white" style="background: linear-gradient(135deg, #d90429, #ef233c);">
-                <span class="text-xs opacity-75 d-block mb-1">📕 ديون إيجابية للمحل (الكريدي بالخارج):</span>
+                <span class="text-xs opacity-75 d-block mb-1">📕 ديون إيجابية للمحل (الكريدي ):</span>
                 <h3 class="fw-bold font-monospace mb-0">{{ number_format($total_positive_debt, 2) }} <span class="fs-6">دج</span></h3>
                 <small class="text-xs text-white-50 mt-1 d-block">⚠️ أموال مطلوب تحصيلها من الزبائن</small>
             </div>
@@ -78,7 +78,7 @@ new class extends Component
 
         <div class="col-md-3">
             <div class="card border-0 shadow-sm rounded-4 p-3 text-white" style="background: linear-gradient(135deg, #2ec4b6, #0f9f90);">
-                <span class="text-xs opacity-75 d-block mb-1">🟢 ديون سلبية (فضلات الزبائن عندك):</span>
+                <span class="text-xs opacity-75 d-block mb-1">🟢 ديون سلبية :</span>
                 <h3 class="fw-bold font-monospace mb-0">{{ number_format($total_negative_debt, 2) }} <span class="fs-6">دج</span></h3>
                 <small class="text-xs text-white-50 mt-1 d-block">✨ مبالغ زائدة تركها الزبائن في حساباتهم</small>
             </div>
@@ -86,7 +86,7 @@ new class extends Component
 
         <div class="col-md-3">
             <div class="card border-0 shadow-sm rounded-4 p-3 text-white" style="background: linear-gradient(135deg, #872061, #b13384);">
-                <span class="text-xs opacity-75 d-block mb-1">📊 إجمالي إيرادات المبيعات (السينال):</span>
+                <span class="text-xs opacity-75 d-block mb-1">📊 إجمالي إيرادات المبيعات  :</span>
                 <h3 class="fw-bold font-monospace text-warning mb-0">{{ number_format($total_sales_revenue, 2) }} <span class="fs-6">دج</span></h3>
                 <small class="text-xs text-white-50 mt-1 d-block">📈 مجموع الفواتير الموثقة بالنظام</small>
             </div>

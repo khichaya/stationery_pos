@@ -667,89 +667,90 @@ new class extends Component
         modal.show();
     }
 
-    // ====== طباعة تيكيت الباركود ======
-    function printBarcodeTicket(name, price, barcode) {
-        const printWindow = window.open('', '_blank', 'width=400,height=300');
-        
-        printWindow.document.write(`
-            <!DOCTYPE html>
-            <html dir="rtl">
-            <head>
-                <meta charset="UTF-8">
-                <title>طباعة ملصق - ${name}</title>
-                <style>
-                    @page { size: 58mm 40mm; margin: 0; }
-                    * { box-sizing: border-box; margin: 0; padding: 0; }
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
-                        direction: rtl;
-                        text-align: center;
-                        width: 58mm;
-                        padding: 2mm;
-                        font-size: 10px;
-                        background: #fff;
-                    }
-                    .store-name {
-                        font-size: 9px;
-                        font-weight: bold;
-                        border-bottom: 1px dashed #000;
-                        padding-bottom: 2px;
-                        margin-bottom: 3px;
-                        color: #872061;
-                    }
-                    .product-name {
-                        font-weight: bold;
-                        font-size: 11px;
-                        margin-bottom: 2px;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        max-width: 54mm;
-                    }
-                    .price {
-                        font-size: 16px;
-                        font-weight: bold;
-                        color: #000;
-                        margin: 2px 0;
-                    }
-                    .price-currency { font-size: 10px; }
-                    .barcode-container {
-                        margin-top: 3px;
-                        display: flex;
-                        justify-content: center;
-                    }
-                    .barcode-container svg {
-                        max-width: 54mm;
-                        height: 30px;
-                    }
-                    .barcode-text {
-                        font-family: 'Courier New', monospace;
-                        font-size: 9px;
-                        letter-spacing: 1px;
-                        margin-top: 1px;
-                    }
-                    .date-line {
-                        font-size: 7px;
-                        color: #666;
-                        margin-top: 2px;
-                    }
-                </style>
-            </head>
-            <body>
-                <div class="store-name">✨ مكتبة السلام ✨</div>
-                <div class="product-name">${name}</div>
-                <div class="price">
-                    ${parseFloat(price).toLocaleString('fr-DZ', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                    <span class="price-currency">دج</span>
-                </div>
-                <div class="barcode-container">
-                    <svg id="barcode-svg"></svg>
-                </div>
-                <div class="barcode-text">${barcode}</div>
-                <div class="date-line">${new date().toLocaledateString('ar-DZ')}</div>
-                
-                <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.12.3/dist/JsBarcode.all.min.js"><\/script>
-                <script>
+function printBarcodeTicket(name, price, barcode) {
+    const printWindow = window.open('', '_blank', 'width=400,height=300');
+    
+    // إنشاء محتوى HTML كامل
+    const htmlContent = `
+        <!DOCTYPE html>
+        <html dir="rtl">
+        <head>
+            <meta charset="UTF-8">
+            <title>طباعة ملصق - ${name}</title>
+            <style>
+                @page { size: 58mm 40mm; margin: 0; }
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body {
+                    font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+                    direction: rtl;
+                    text-align: center;
+                    width: 58mm;
+                    padding: 2mm;
+                    font-size: 10px;
+                    background: #fff;
+                }
+                .store-name {
+                    font-size: 9px;
+                    font-weight: bold;
+                    border-bottom: 1px dashed #000;
+                    padding-bottom: 2px;
+                    margin-bottom: 3px;
+                    color: #872061;
+                }
+                .product-name {
+                    font-weight: bold;
+                    font-size: 11px;
+                    margin-bottom: 2px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 54mm;
+                }
+                .price {
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #000;
+                    margin: 2px 0;
+                }
+                .price-currency { font-size: 10px; }
+                .barcode-container {
+                    margin-top: 3px;
+                    display: flex;
+                    justify-content: center;
+                }
+                .barcode-container svg {
+                    max-width: 54mm;
+                    height: 30px;
+                }
+                .barcode-text {
+                    font-family: 'Courier New', monospace;
+                    font-size: 9px;
+                    letter-spacing: 1px;
+                    margin-top: 1px;
+                }
+                .date-line {
+                    font-size: 7px;
+                    color: #666;
+                    margin-top: 2px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="store-name">✨ مكتبة السلام ✨</div>
+            <div class="product-name">${name}</div>
+            <div class="price">
+                ${parseFloat(price).toLocaleString('fr-DZ', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
+                <span class="price-currency">دج</span>
+            </div>
+            <div class="barcode-container">
+                <svg id="barcode-svg"></svg>
+            </div>
+            <div class="barcode-text">${barcode}</div>
+            <div class="date-line">${new Date().toLocaleDateString('ar-DZ')}</div>
+            
+            <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.12.3/dist/JsBarcode.all.min.js"><\/script>
+            <script>
+                window.onload = function() {
                     try {
                         JsBarcode("#barcode-svg", "${barcode}", {
                             format: "CODE128",
@@ -766,16 +767,21 @@ new class extends Component
                         }, 300);
                     } catch(e) {
                         console.error("Barcode error:", e);
-                        document.querySelector('.barcode-container').innerHTML = '<div style="font-size:20px;letter-spacing:3px;">| ' + "${barcode}" + ' |</div>';
+                        document.querySelector('.barcode-container').innerHTML = 
+                            '<div style="font-size:20px;letter-spacing:3px;">| ' + "${barcode}" + ' |</div>';
                         window.print();
                         window.close();
                     }
-                <\/script>
-            </body>
-            </html>
-        `);
-        printWindow.document.close();
-    }
+                };
+            <\/script>
+        </body>
+        </html>
+    `;
+    
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+}
 
     document.addEventListener('livewire:init', () => {
         Livewire.on('close-modal', (event) => {
