@@ -1,0 +1,183 @@
+/* ═══════════════════════════════════════════════════════════
+   products.css — ملف الأنماط المعزول لصفحة إدارة السلع
+   المكتبة: مكتبة السلام — نظام Bayane POS
+═══════════════════════════════════════════════════════════ */
+
+/* ── عامة ─────────────────────────────────────────────── */
+.text-xs { font-size: 0.75rem; }
+.rounded-4 { border-radius: 16px !important; }
+
+/* ── الحد العلوي المميز ───────────────────────────────── */
+.border-top-custom { border-top: 4px solid #872061; }
+
+/* ── تبويبات النموذج ──────────────────────────────────── */
+.product-tabs { border-bottom: 1px solid #eee; }
+
+.product-tabs .nav-link {
+    border: none;
+    background: none;
+    color: #8a97a3;
+    font-weight: 700;
+    font-size: .85rem;
+    padding: .55rem .9rem;
+    border-radius: 8px 8px 0 0;
+    transition: color .2s ease, background .2s ease;
+}
+
+.product-tabs .nav-link:hover {
+    color: #872061;
+    background: #fdf4f9;
+}
+
+.product-tabs .nav-link.active {
+    color: #872061;
+    background: #f8f0f5;
+    border-bottom: 3px solid #872061;
+}
+
+/* ── صندوق رفع الصورة ─────────────────────────────────── */
+.photo-upload-box {
+    position: relative;
+    width: 100%;
+    height: 140px;
+    border: 2px dashed #d8dee3;
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #fafbfc;
+    cursor: pointer;
+    transition: border-color .2s ease, background .2s ease;
+}
+
+.photo-upload-box:hover {
+    border-color: #872061;
+    background: #fdf4f9;
+}
+
+.photo-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+}
+
+.photo-preview {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.photo-placeholder { text-align: center; }
+
+/* ── صورة مصغرة في الجدول ────────────────────────────── */
+.row-thumb {
+    width: 42px !important;
+    height: 42px !important;
+    max-width: 42px !important;
+    max-height: 42px !important;
+    object-fit: cover;
+    border-radius: 8px;
+    cursor: pointer;
+    display: block;
+    transition: transform .2s ease;
+}
+
+.row-thumb:hover { transform: scale(1.1); }
+
+.row-thumb-placeholder {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f1f3f5;
+    color: #adb5bd;
+    font-size: 1.1rem;
+    border-radius: 8px;
+}
+
+.row-thumb-broken { display: none; }
+
+/* ── خلية الصورة في الجدول: تمنع التمدد ─────────────── */
+.products-table td:first-child {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    padding: 6px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+/* ── بطاقات الإحصائيات ────────────────────────────────── */
+.stat-card {
+    border-radius: 16px;
+    border: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stat-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15) !important;
+}
+
+.stat-card-purple { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+.stat-card-green  { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
+.stat-card-pink   { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
+.stat-card-blue   { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+
+.stat-icon-box {
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.stat-label {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.stat-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #fff;
+}
+
+/* ── جدول السلع ───────────────────────────────────────── */
+.products-table thead th {
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: #f8f9fa;
+    white-space: nowrap;
+}
+
+.products-table td {
+    vertical-align: middle;
+    font-size: 0.82rem;
+}
+
+/* ── أزرار الخيارات في الجدول ─────────────────────────── */
+.btn-action {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    line-height: 1;
+}
+
+/* ── مؤشر تحميل Livewire ──────────────────────────────── */
+[wire\:loading] { opacity: 0.6; pointer-events: none; }
