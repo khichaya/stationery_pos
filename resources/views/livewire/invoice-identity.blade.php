@@ -3,7 +3,14 @@
 use Livewire\Component;
 use Livewire\WithFileUploads;
 use App\Models\InstitutionSetting;
+use App\Models\Product;
+use App\Models\ProductBarcode;
+use App\Models\SaleItem;
+use App\Models\PurchaseItem;
+use App\Models\StockMovement;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 
 new class extends Component
 {
@@ -22,6 +29,9 @@ new class extends Component
     public $invoice_footer = '';
     public $logo;
     public $existing_logo = '';
+
+    // ✅ خصائص تصفير المخزون
+    public $reset_password = '';
 
     public function mount()
     {
@@ -83,6 +93,47 @@ new class extends Component
 
         session()->flash('success', '✨ تم حفظ بيانات المؤسسة بنجاح!');
     }
+
+    // ✅ دالة تصفير المخزون
+    public function resetInventory()
+    {
+        // 1. التحقق من كلمة المرور
+        $this->validate([
+            'reset_password' => 'required|string',
+        ], [
+            'reset_password.required' => 'كلمة المرور مطلوبة لتأكيد العملية.',
+        ]);
+
+        $user = auth()->user();
+
+        // 2. مطابقة كلمة المرور مع المستخدم الحالي
+        if (!Hash::check($this->reset_password, $user->password)) {
+            $this->addError('reset_password', 'كلمة المرور غير صحيحة!');
+            return;
+        }
+
+        // 3. بدء عملية الحذف (مع حذف السجلات المرتبطة أولاً)
+        DB::beginTransaction();
+        try {
+            // حذف السجلات المرتبطة لتفادي خطأ Foreign Key
+            SaleItem::truncate();
+            PurchaseItem::truncate();
+            StockMovement::truncate();
+            ProductBarcode::truncate();
+            
+            // حذف المنتجات
+            Product::truncate();
+
+            DB::commit();
+
+            $this->reset('reset_password');
+            session()->flash('success', '⚠️ تم تصفير المخزون وحذف جميع السلع بنجاح!');
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            $this->addError('reset_password', 'حدث خطأ أثناء التصفير: ' . $e->getMessage());
+        }
+    }
 };
 ?>
 
@@ -96,7 +147,7 @@ new class extends Component
 
     <div class="row justify-content-center">
         <div class="col-md-8">
-            <div class="card shadow-sm border-0" style="border-top: 4px solid #872061; border-radius: 12px;">
+            <div class="card shadow-sm border-0 mb-4" style="border-top: 4px solid #872061; border-radius: 12px;">
                 <div class="card-header bg-white py-3">
                     <h6 class="fw-bold mb-0 text-dark">⚙️ إعدادات هوية المؤسسة وهيدر الفواتير</h6>
                 </div>
@@ -198,6 +249,35 @@ new class extends Component
                     </form>
                 </div>
             </div>
+
+            {{-- ✅ قسم منطقة الخطر (تصفير المخزون) --}}
+            <div class="card shadow-sm border-danger" style="border-top: 4px solid #dc3545; border-radius: 12px;">
+                <div class="card-header bg-danger text-white py-3">
+                    <h6 class="fw-bold mb-0">⚠️ منطقة الخطر (تصفير المخزون)</h6>
+                </div>
+                <div class="card-body p-4">
+                    <div class="alert alert-warning small mb-3">
+                        <b>تنبيه:</b> سيؤدي هذا الإجراء إلى حذف <b>جميع السلع</b>، الباركودات، عناصر المبيعات والمشتريات، وحركات المخزون نهائياً. 
+                        لا يمكن التراجع عن هذا الإجراء! تأكد من عمل نسخة احتياطية قبل المتابعة.
+                    </div>
+                    
+                    <form wire:submit.prevent="resetInventory" class="mt-3">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-8">
+                                <label class="form-label small fw-bold text-danger">تأكيد كلمة المرور للمتابعة</label>
+                                <input type="password" wire:model="reset_password" class="form-control form-control-sm @error('reset_password') is-invalid @enderror" placeholder="أدخل كلمة مرور حسابك">
+                                @error('reset_password') <span class="text-danger small">{{ $message }}</span> @enderror
+                            </div>
+                            <div class="col-md-4">
+                                <button type="submit" class="btn btn-danger btn-sm w-100 fw-bold" onclick="return confirm('هل أنت متأكد تماماً؟ سيتم مسح كل ما يخص المخزون!')">
+                                    🗑️ تصفير المخزون نهائياً
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>

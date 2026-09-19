@@ -3,6 +3,7 @@
 use Livewire\Component;
 use App\Models\Service;
 use App\Models\Customer;
+use App\Models\FavoriteService;
 use Livewire\WithPagination;
 use Illuminate\Support\Facades\DB;
 
@@ -13,38 +14,125 @@ new class extends Component
     protected $paginationTheme = 'bootstrap';
 
     public $search = '';
-    public $service_id, $service_type, $price = 0, $selected_customer_id, $payment_method = 'full', $paid_amount = 0;
+    public $service_id, $service_type, $price = 0, $quantity = 1, $selected_customer_id, $payment_method = 'full', $paid_amount = 0;
     public $is_edit = false;
+    
+    public $favorites_services = [];
+    public $showFavoritesManager = false;
+    public $fav_service_type = '';
+    public $fav_service_price = 0;
+    public $fav_service_quantity = 1;
+
+    public function mount()
+    {
+        $this->loadFavoriteServices();
+    }
 
     public function resetFields()
     {
-        $this->reset(['service_id', 'service_type', 'price', 'selected_customer_id', 'payment_method', 'paid_amount', 'is_edit']);
+        $this->reset(['service_id', 'service_type', 'price', 'quantity', 'selected_customer_id', 'payment_method', 'paid_amount', 'is_edit']);
         $this->payment_method = 'full';
+        $this->quantity = 1;
+        $this->price = 0;
+        $this->paid_amount = 0;
     }
 
-    public function updatedPaymentMethod()
+    // ═══════════════════════════════════════════════
+    // دوال المفضلة
+    // ═══════════════════════════════════════════════
+
+    public function loadFavoriteServices()
     {
+        $this->favorites_services = FavoriteService::where('user_id', auth()->id() ?? 1)->get();
+    }
+
+    public function toggleFavoritesManager()
+    {
+        $this->showFavoritesManager = !$this->showFavoritesManager;
+    }
+
+    // ✅ إضافة قالب مفضلة جديد (بدون الحقل المحذوف service_id)
+    public function addFavoriteService()
+    {
+        $this->validate([
+            'fav_service_type' => 'required|string|max:255',
+            'fav_service_price' => 'required|numeric|min:0',
+            'fav_service_quantity' => 'required|integer|min:1',
+        ], [
+            'fav_service_type.required' => 'نوع الخدمة مطلوب.',
+            'fav_service_price.required' => 'السعر مطلوب.',
+        ]);
+
+        // ✅ حفظ كقالب مستقل تماماً بعد حذف عمود service_id
+        FavoriteService::create([
+            'user_id' => auth()->id() ?? 1,
+            'service_type' => $this->fav_service_type,
+            'price' => $this->fav_service_price,
+            'quantity' => $this->fav_service_quantity,
+        ]);
+
+        $this->reset(['fav_service_type', 'fav_service_price', 'fav_service_quantity']);
+        $this->fav_service_quantity = 1;
+        $this->loadFavoriteServices();
+        session()->flash('success', '⭐ تمت إضافة القالب للمفضلة بنجاح!');
+    }
+
+    public function deleteFavoriteService($favId)
+    {
+        $fav = FavoriteService::find($favId);
+        if ($fav) {
+            $fav->delete();
+            $this->loadFavoriteServices();
+            session()->flash('success', '🗑️ تمت إزالة القالب من المفضلة.');
+        }
+    }
+
+    // ✅ اختيار قالب لملء النموذج السفلي
+    public function useFavoriteService($favId)
+    {
+        $fav = FavoriteService::find($favId);
+        
+        if ($fav) {
+            $this->resetFields();
+            
+            $this->service_type = $fav->service_type;
+            $this->price = (float) $fav->price;
+            $this->quantity = (int) $fav->quantity;
+            
+            $this->calculatePaidAmount();
+            
+            session()->flash('success', '✨ تم تحميل القالب! اضغط "تأكيد وترحيل المعاملة" مباشرة.');
+        }
+    }
+
+    // ═══════════════════════════════════════════════
+    // الدوال الأساسية للخدمات
+    // ═══════════════════════════════════════════════
+
+    public function calculatePaidAmount()
+    {
+        $total = (float) $this->price * (int) $this->quantity;
         if ($this->payment_method === 'full') {
-            $this->paid_amount = $this->price;
+            $this->paid_amount = $total;
         } elseif ($this->payment_method === 'debt') {
             $this->paid_amount = 0;
         }
     }
 
-    public function updatedPrice()
-    {
-        if ($this->payment_method === 'full') {
-            $this->paid_amount = $this->price;
-        }
-    }
+    public function updatedPrice() { $this->calculatePaidAmount(); }
+    public function updatedQuantity() { $this->calculatePaidAmount(); }
+    public function updatedPaymentMethod() { $this->calculatePaidAmount(); }
 
     public function saveService()
     {
+        $total_amount = $this->price * $this->quantity;
+
         $this->validate([
             'service_type' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
+            'quantity' => 'required|integer|min:1',
             'payment_method' => 'required|in:full,partial,debt',
-            'paid_amount' => 'required|numeric|min:0|max:' . $this->price,
+            'paid_amount' => 'required|numeric|min:0|max:' . $total_amount,
         ]);
 
         if (in_array($this->payment_method, ['partial', 'debt']) && !$this->selected_customer_id) {
@@ -54,12 +142,12 @@ new class extends Component
 
         DB::beginTransaction();
         try {
-            $debt = $this->price - $this->paid_amount;
+            $debt = $total_amount - $this->paid_amount;
 
             if ($this->is_edit && $this->service_id) {
                 $oldService = Service::find($this->service_id);
                 if ($oldService && $oldService->customer_id) {
-                    $oldDebt = $oldService->price - $oldService->paid_amount;
+                    $oldDebt = ($oldService->price * $oldService->quantity) - $oldService->paid_amount;
                     if ($oldDebt > 0) {
                         Customer::where('name', optional($oldService->customer)->name)
                                 ->where('observation', 'like', '%خدمة رقم #' . $oldService->id . '%')
@@ -73,6 +161,7 @@ new class extends Component
                 [
                     'service_type' => $this->service_type,
                     'price' => $this->price,
+                    'quantity' => $this->quantity,
                     'user_id' => auth()->id() ?? 1,
                     'customer_id' => $this->selected_customer_id ?: null,
                     'payment_method' => $this->payment_method,
@@ -108,6 +197,7 @@ new class extends Component
         $this->service_id = $service->id;
         $this->service_type = $service->service_type;
         $this->price = $service->price;
+        $this->quantity = $service->quantity;
         $this->selected_customer_id = $service->customer_id;
         $this->payment_method = $service->payment_method;
         $this->paid_amount = $service->paid_amount;
@@ -148,6 +238,83 @@ new class extends Component
         <div class="alert alert-danger border-0 shadow-sm p-2 small fw-bold mb-3">⚠️ {{ session('error') }}</div>
     @endif
 
+    {{-- ✅ قسم المفضلة --}}
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="fw-bold mb-0 text-dark">⚡ الخدمات المبتكرة والمفضلة</h5>
+        <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-outline-danger fw-bold">
+            {{ $showFavoritesManager ? '✕ إغلاق الإدارة' : '⭐ إدارة المفضلة' }}
+        </button>
+    </div>
+
+    @if ($showFavoritesManager)
+        <div class="card mb-3 shadow-sm border-danger">
+            <div class="card-header bg-danger text-white py-2">
+                <h6 class="fw-bold mb-0">➕ إضافة قالب جديد للمفضلة</h6>
+            </div>
+            <div class="card-body">
+                <div class="row g-2 align-items-end p-2 bg-light rounded-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-bold">نوع الخدمة</label>
+                        <input type="text" wire:model="fav_service_type" class="form-control form-control-sm" placeholder="مثال: تصوير وثائق">
+                        @error('fav_service_type') <span class="text-danger small">{{ $message }}</span> @enderror
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">السعر</label>
+                        <input type="number" step="0.01" wire:model="fav_service_price" class="form-control form-control-sm text-center" min="0">
+                        @error('fav_service_price') <span class="text-danger small">{{ $message }}</span> @enderror
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small fw-bold">الكمية</label>
+                        <input type="number" wire:model="fav_service_quantity" class="form-control form-control-sm text-center" min="1" value="1">
+                        @error('fav_service_quantity') <span class="text-danger small">{{ $message }}</span> @enderror
+                    </div>
+                    <div class="col-md-2 d-grid">
+                        <button wire:click="addFavoriteService" class="btn btn-danger btn-sm fw-bold">➕ إضافة</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endif
+
+    @if (count($favorites_services) > 0)
+        <div class="card mb-4 shadow-sm border-0">
+            <div class="card-header bg-white border-0 py-2 d-flex justify-content-between align-items-center">
+                <h6 class="fw-bold mb-0 text-danger">
+                    ⭐ خدمات سريعة
+                    <span class="small text-muted fw-normal">— اضغط + لتحميلها في النموذج فوراً</span>
+                </h6>
+                <span class="badge bg-danger-subtle text-danger">{{ count($favorites_services) }} عنصر</span>
+            </div>
+            <div class="card-body pt-0">
+                <div class="row g-2">
+                    @foreach ($favorites_services as $fav)
+                        <div class="col-6 col-sm-4 col-md-3">
+                            <div class="favorite-card" style="--fav-color: #6f42c1">
+                                <div class="favorite-icon">⚙️</div>
+                                <div class="favorite-name">{{ $fav->service_type }}</div>
+                                <div class="favorite-price">
+                                    @if($fav->quantity > 1)
+                                        {{ $fav->quantity }} × 
+                                    @endif
+                                    {{ number_format($fav->price, 2) }} دج
+                                </div>
+                                <button type="button" wire:click="useFavoriteService({{ $fav->id }})" class="favorite-add-btn" title="تحميل في النموذج">
+                                    <span>+</span>
+                                </button>
+                                
+                                @if($showFavoritesManager)
+                                <button type="button" wire:click="deleteFavoriteService({{ $fav->id }})" class="favorite-del-btn" title="حذف من المفضلة">
+                                    <span>✕</span>
+                                </button>
+                                @endif
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+            </div>
+        </div>
+    @endif
+
     <div class="row g-4">
         <div class="col-md-4">
             <div class="card border-0 shadow-sm rounded-4 bg-light">
@@ -169,9 +336,15 @@ new class extends Component
                             </datalist>
                         </div>
 
-                        <div class="mb-3">
-                            <label class="form-label small fw-bold text-muted">السعر المالي المستحق (دج)</label>
-                            <input type="number" step="0.01" wire:model.live="price" class="form-control border-0 shadow-sm bg-white fw-bold text-center text-primary fs-4" required>
+                        <div class="row g-2 mb-3">
+                            <div class="col-8">
+                                <label class="form-label small fw-bold text-muted">السعر (دج)</label>
+                                <input type="number" step="0.01" wire:model.live="price" class="form-control border-0 shadow-sm bg-white fw-bold text-center text-primary fs-5" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small fw-bold text-muted">الكمية</label>
+                                <input type="number" wire:model.live="quantity" class="form-control border-0 shadow-sm bg-white fw-bold text-center fs-5" min="1" required>
+                            </div>
                         </div>
 
                         <div class="mb-3">
@@ -227,19 +400,21 @@ new class extends Component
                                   });
                         })
                         ->orderBy('created_at', 'desc')
-                        ->paginate(6); // 6 بطاقات في الصفحة الواحدة لراحة العين
+                        ->paginate(6); 
                 @endphp
 
                 @forelse($servicesList as $serv)
                     <div class="col-md-6">
                         <div class="card border-0 shadow-sm rounded-4 card-service-custom position-relative overflow-hidden" style="border-right: 5px solid {{ $serv->payment_method === 'full' ? '#2ec4b6' : ($serv->payment_method === 'partial' ? '#ff9f1c' : '#e71d36') }} !important;">
+                            
                             <div class="card-body p-3">
                                 <div class="d-flex justify-content-between align-items-start mb-2">
                                     <div>
                                         <span class="text-xs text-muted font-monospace">#{{ $serv->id }}</span>
                                         <h5 class="fw-bold text-dark my-1" style="font-size: 1.05rem;">{{ $serv->service_type }}</h5>
+                                        <span class="text-xs text-muted">الكمية: <b>{{ $serv->quantity }}</b></span>
                                     </div>
-                                    <span class="fs-5 fw-bold font-monospace text-primary">{{ number_format($serv->price, 2) }} <span style="font-size: 0.75rem;">دج</span></span>
+                                    <span class="fs-5 fw-bold font-monospace text-primary">{{ number_format($serv->price * $serv->quantity, 2) }} <span style="font-size: 0.75rem;">دج</span></span>
                                 </div>
 
                                 <div class="mb-3 bg-light rounded-3 p-2 text-start">
@@ -287,4 +462,31 @@ new class extends Component
     .text-xs { font-size: 0.73rem; }
     .card-service-custom { transition: transform 0.2s ease, box-shadow 0.2s ease; background-color: #fff; }
     .card-service-custom:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.05) !important; }
+
+    .favorite-card {
+        position: relative; background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+        border: 2px solid var(--fav-color, #872061); border-radius: 12px; padding: 12px 8px 8px;
+        text-align: center; cursor: pointer; transition: all 0.2s ease; height: 100%; min-height: 110px;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden;
+    }
+    .favorite-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); border-color: var(--fav-color, #872061); }
+    .favorite-icon { font-size: 1.8rem; margin-bottom: 4px; line-height: 1; }
+    .favorite-name { font-size: 0.78rem; font-weight: 700; color: #333; line-height: 1.2; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .favorite-price { font-size: 0.75rem; font-weight: 600; color: var(--fav-color, #872061); font-family: monospace; }
+    
+    .favorite-add-btn {
+        position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; 
+        background: var(--fav-color, #872061); color: #fff; border: none; display: flex; 
+        align-items: center; justify-content: center; font-size: 1rem; font-weight: bold; cursor: pointer; z-index: 2;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2); transition: all 0.15s ease;
+    }
+    .favorite-add-btn:hover { transform: scale(1.15); }
+
+    .favorite-del-btn {
+        position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; 
+        background: #dc3545; color: #fff; border: none; display: flex; align-items: center; justify-content: center;
+        font-size: 0.8rem; font-weight: bold; cursor: pointer; z-index: 2; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        transition: all 0.15s ease;
+    }
+    .favorite-del-btn:hover { transform: scale(1.15); }
 </style>

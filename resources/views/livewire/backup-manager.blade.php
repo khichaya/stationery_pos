@@ -15,13 +15,20 @@ new class extends Component
     public $backup_frequency = 'daily';
     public $backup_destination = 'local';
     public $backup_file;
+    
+    // ✅ خاصية مسار الحفظ المخصص
+    public $backup_path = '';
 
     public function mount()
     {
-        if (!auth()->user() || !in_array('database_backup', json_decode(auth()->user()->permissions, true) ?? [])) {
-    abort(403, 'عذراً، لا تملك الصلاحية الإدارية للوصول لهذه الشاشة بقفل بيان.');
-}
-        // تحميل الإعدادات المحفوظة مسبقاً عند فتح الصفحة
+        $user = auth()->user();
+        
+        $userPerms = is_array($user->permissions) ? $user->permissions : (json_decode($user->permissions, true) ?? []);
+
+        if (!$user || !in_array('database_backup', $userPerms)) {
+            abort(403, 'عذراً، لا تملك الصلاحية الإدارية للوصول لهذه الشاشة بقفل بيان.');
+        }
+
         $row = DB::table('settings')->where('key', 'backup_config')->first();
         if ($row) {
             $config = json_decode($row->value, true);
@@ -29,18 +36,36 @@ new class extends Component
             $this->backup_time = $config['backup_time'] ?? '23:00';
             $this->backup_frequency = $config['backup_frequency'] ?? 'daily';
             $this->backup_destination = $config['backup_destination'] ?? 'local';
+            $this->backup_path = $config['backup_path'] ?? storage_path('app/backups');
+        } else {
+            $this->backup_path = storage_path('app/backups');
         }
+    }
+
+    // ✅ دالة للحصول على المسار الفعلي (تستخدمه الطباعة والقراءة)
+    public function getActivePath()
+    {
+        return !empty($this->backup_path) ? rtrim($this->backup_path, '/\\') : storage_path('app/backups');
     }
 
     public function getRealBackups()
     {
-        $directory = storage_path('app/backups');
+        $directory = $this->getActivePath();
 
+        // إذا كان المجلد غير موجود، حاول إنشاءه
         if (!File::exists($directory)) {
-            File::makeDirectory($directory, 0755, true, true);
+            try {
+                File::makeDirectory($directory, 0755, true, true);
+            } catch (\Exception $e) {
+                return collect([]); // إرجاع فارغ إذا تعذر إنشاء المجلد (مثلاً مسار غير صالح)
+            }
         }
 
-        $files = File::files($directory);
+        try {
+            $files = File::files($directory);
+        } catch (\Exception $e) {
+            return collect([]);
+        }
 
         return collect($files)->map(function ($file) {
             return [
@@ -51,7 +76,6 @@ new class extends Component
         })->sortByDesc('date');
     }
 
-    // 1️⃣ النسخ اليدوي والتحميل الفوري (يستخدم نفس BackupService)
     public function runManualBackup(BackupService $backupService)
     {
         $path = $backupService->create('bayane_backup');
@@ -61,15 +85,18 @@ new class extends Component
         return response()->download($path);
     }
 
-    // 2️⃣ حفظ إعدادات الجدولة فقط - لا تشغيل بايثون، لا proc_open، لا exec
-    // التنفيذ الفعلي يتم عبر Laravel Scheduler (backup:check-schedule) الذي يعمل كل دقيقة
     public function saveAutoBackupSettings()
     {
+        $this->validate([
+            'backup_path' => 'nullable|string|max:255',
+        ]);
+
         $configValues = [
             'auto_backup' => $this->auto_backup,
             'backup_time' => $this->backup_time,
             'backup_frequency' => $this->backup_frequency,
             'backup_destination' => $this->backup_destination,
+            'backup_path' => $this->backup_path ?: storage_path('app/backups'),
         ];
 
         DB::table('settings')->updateOrInsert(
@@ -77,17 +104,33 @@ new class extends Component
             ['value' => json_encode($configValues), 'updated_at' => now()]
         );
 
-        session()->flash('success', '⚙️ تم حفظ إعدادات الجدولة بنجاح. سيتم تنفيذ النسخ تلقائياً حسب التوقيت المحدد طالما أن مجدول لارافل يعمل.');
+        session()->flash('success', '⚙️ تم حفظ إعدادات الجدولة ومسار الحفظ بنجاح.');
     }
 
-    // 3️⃣ استرجاع قاعدة البيانات
+    // ✅ دالة حذف النسخة الاحتياطية
+    public function deleteBackup($fileName)
+    {
+        $path = $this->getActivePath() . DIRECTORY_SEPARATOR . $fileName;
+
+        if (File::exists($path)) {
+            try {
+                File::delete($path);
+                session()->flash('success', "🗑️ تم حذف النسخة الاحتياطية بنجاح.");
+            } catch (\Exception $e) {
+                session()->flash('error', '❌ تعذر حذف الملف: ' . $e->getMessage());
+            }
+        } else {
+            session()->flash('error', '❌ الملف غير موجود على السيرفر.');
+        }
+    }
+
     public function restoreBackup($fileName = null)
     {
         if ($this->backup_file && is_null($fileName)) {
             $this->validate(['backup_file' => 'required|file|max:51200']);
             $path = $this->backup_file->getRealPath();
         } elseif (!is_null($fileName)) {
-            $path = storage_path('app/backups/' . $fileName);
+            $path = $this->getActivePath() . DIRECTORY_SEPARATOR . $fileName;
             if (!File::exists($path)) {
                 session()->flash('error', '❌ ملف النسخة الاحتياطية غير موجود على السيرفر!');
                 return;
@@ -112,7 +155,7 @@ new class extends Component
             env('DB_USERNAME'),
             $passwordParam,
             env('DB_HOST'),
-            env('DB_daTABASE'),
+            env('DB_DATABASE'),
             escapeshellarg($path)
         );
 
@@ -195,7 +238,7 @@ new class extends Component
                                 <input type="time" wire:model.live="backup_time" class="form-control form-control-sm text-center font-monospace">
                             </div>
 
-                            <div class="mb-3">
+                            <div class="mb-2">
                                 <label class="form-label small fw-bold">📍 مكان ومسار الحفظ</label>
                                 <select wire:model.live="backup_destination" class="form-select form-select-sm">
                                     <option value="local">📁 تخزين محلي على السيرفر (Local Storage)</option>
@@ -203,6 +246,26 @@ new class extends Component
                                     <option value="dropbox">☁️ سحابة دروب بوكس (Dropbox)</option>
                                 </select>
                             </div>
+
+                            {{-- ✅ حقل تغيير المسار الفعلي --}}
+                            @if($backup_destination == 'local')
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold">مسار الحفظ المخصص</label>
+                                    <input type="text" wire:model.live="backup_path" class="form-control form-control-sm font-monospace @error('backup_path') is-invalid @enderror" placeholder="C:\backups أو /var/www/backups">
+                                    @error('backup_path') <span class="text-danger small">{{ $message }}</span> @enderror
+                                    
+                                    <div class="alert alert-info small mt-2 p-2 mb-0 text-start border" dir="ltr">
+                                        <i class="bi bi-folder-symlink"></i>
+                                        <b>المسار الحالي:</b><br>
+                                        <code>{{ $backup_path }}</code>
+                                    </div>
+                                </div>
+                            @else
+                                <div class="alert alert-warning small mt-2 p-2 mb-3 text-start border">
+                                    <i class="bi bi-exclamation-triangle"></i>
+                                    يتطلب هذا الخيار إعداد مفاتيح الـ API الخاصة بالسحابة في ملف <code dir="ltr">.env</code> ليعمل النسخ التلقائي.
+                                </div>
+                            @endif
 
                             <button type="submit" class="btn btn-success btn-sm w-100 fw-bold shadow-sm">
                                 <i class="bi bi-check-circle me-1"></i> حفظ إعدادات الأتمتة
@@ -257,7 +320,10 @@ new class extends Component
                                     <td><span class="badge bg-primary-subtle text-primary">نظام بيان</span></td>
                                     <td class="text-muted font-monospace">{{ $backup['date'] }}</td>
                                     <td>
-                                        <button wire:click="restoreBackup('{{ $backup['name'] }}')" class="btn btn-outline-warning btn-sm px-2 py-0 text-dark fw-bold text-xs" onclick="return confirm('هل أنت متأكد من استرجاع هذا الملف الحقيقي؟')">🔄 استرجاع</button>
+                                        <div class="d-flex gap-1 justify-content-center">
+                                            <button wire:click="restoreBackup('{{ $backup['name'] }}')" class="btn btn-outline-warning btn-sm px-2 py-0 text-dark fw-bold text-xs" onclick="return confirm('هل أنت متأكد من استرجاع هذا الملف الحقيقي؟')">🔄 استرجاع</button>
+                                            <button wire:click="deleteBackup('{{ $backup['name'] }}')" class="btn btn-outline-danger btn-sm px-2 py-0 fw-bold text-xs" onclick="return confirm('⚠️ هل أنت متأكد من حذف هذا الملف نهائياً؟')">🗑️ حذف</button>
+                                        </div>
                                     </td>
                                 </tr>
                             @empty

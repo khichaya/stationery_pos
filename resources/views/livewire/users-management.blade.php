@@ -86,7 +86,7 @@ new class extends Component
         $this->loadUsers();
     }
 
-    public function editUser($id)
+public function editUser($id)
     {
         $this->resetFields();
         $user = User::findOrFail($id);
@@ -97,7 +97,13 @@ new class extends Component
         $this->role    = $user->role;
         $this->is_edit = true;
 
-        $oldPermissions = is_array($user->permissions) ? $user->permissions : (json_decode($user->permissions, true) ?? []);
+        // تفريغ أو ضبط الصلاحيات بشكل آمن
+        $this->selected_permissions = [];
+        
+        $oldPermissions = is_array($user->permissions) 
+            ? $user->permissions 
+            : (json_decode($user->permissions, true) ?? []);
+            
         foreach ($oldPermissions as $perm) {
             $this->selected_permissions[$perm] = true;
         }

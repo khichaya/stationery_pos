@@ -2,7 +2,7 @@
 // app/Models/Product.php
 namespace App\Models;
 
-use Illuminate\database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Model;
 
 class Product extends Model
 {
@@ -13,4 +13,10 @@ class Product extends Model
     public function unit() { return $this->belongsTo(Unit::class); }
     public function storageLocation() { return $this->belongsTo(StorageLocation::class); }
     public function stockMovements() { return $this->hasMany(StockMovement::class); }
+    
+    // إضافة علاقة الباركودات المتعددة
+    public function barcodes() 
+    { 
+        return $this->hasMany(ProductBarcode::class); 
+    }
 }

@@ -4,6 +4,7 @@ use Livewire\Component;
 use Livewire\WithFileUploads;
 use Livewire\WithPagination;
 use App\Models\Product;
+use App\Models\ProductBarcode;
 use App\Models\Category;
 use App\Models\Unit;
 use App\Models\Supplier;
@@ -18,6 +19,9 @@ new class extends Component
     // بحث وفلترة
     public $search = '';
     public $selected_category = '';
+     public $low_stock_category = '';
+    
+  
 
     // بيانات السلعة
     public $product_id, $name, $barcode, $category_id, $unit_id, $supplier_id, $location;
@@ -32,6 +36,9 @@ new class extends Component
     // صورة السلعة
     public $photo;
     public $existing_image;
+
+    // مصفوفة الباركودات الإضافية
+    public $additional_barcodes = [];
 
     // النوافذ السريعة
     public $new_category_name;
@@ -56,7 +63,6 @@ new class extends Component
 
         $this->new_supplier_name = '';
         $this->new_supplier_phone = '';
-
         $this->dispatch('close-modal', modalId: 'quickSupplierModal');
         session()->flash('success', 'تم إضافة المورد الجديد بنجاح!');
     }
@@ -66,7 +72,7 @@ new class extends Component
         $this->reset([
             'product_id', 'name', 'barcode', 'category_id', 'unit_id', 'supplier_id', 'location',
             'purchase_price', 'price_1', 'price_2', 'price_3', 'price_4', 'current_stock', 'min_stock_alert',
-            'photo', 'existing_image', 'is_edit'
+            'photo', 'existing_image', 'is_edit', 'additional_barcodes'
         ]);
         $this->activeTab = 'basic';
     }
@@ -78,6 +84,35 @@ new class extends Component
         } while (Product::where('barcode', $code)->exists());
 
         $this->barcode = $code;
+    }
+
+    public function addBarcodeField()
+    {
+        $this->additional_barcodes[] = '';
+    }
+
+    public function removeBarcodeField($index)
+    {
+        unset($this->additional_barcodes[$index]);
+        $this->additional_barcodes = array_values($this->additional_barcodes);
+    }
+
+    // ✅ دالة حفظ الباركودات من النافذة المنبثقة
+    public function saveAdditionalBarcodes()
+    {
+        if ($this->product_id) {
+            ProductBarcode::where('product_id', $this->product_id)->delete();
+            foreach ($this->additional_barcodes as $extraBarcode) {
+                if (!empty(trim($extraBarcode))) {
+                    ProductBarcode::create([
+                        'product_id' => $this->product_id,
+                        'barcode' => trim($extraBarcode),
+                    ]);
+                }
+            }
+            session()->flash('success', 'تم حفظ الباركودات الإضافية بنجاح!');
+        }
+        $this->dispatch('close-modal', modalId: 'barcodesModal');
     }
 
     public function addCategoryQuickly()
@@ -127,7 +162,7 @@ new class extends Component
             $imagePath = $this->photo->store('products', 'public');
         }
 
-        Product::updateOrCreate(
+        $product = Product::updateOrCreate(
             ['id' => $this->product_id],
             [
                 'name' => $this->name,
@@ -147,13 +182,32 @@ new class extends Component
             ]
         );
 
+        if ($this->is_edit) {
+            ProductBarcode::where('product_id', $product->id)->delete();
+        }
+
+        if (!empty($this->additional_barcodes)) {
+            foreach ($this->additional_barcodes as $extra_barcode) {
+                if (!empty($extra_barcode) && $extra_barcode !== $this->barcode) {
+                    $exists = Product::where('barcode', $extra_barcode)->exists();
+                    $existsInExtra = ProductBarcode::where('barcode', $extra_barcode)->exists();
+                    if (!$exists && !$existsInExtra) {
+                        ProductBarcode::create([
+                            'product_id' => $product->id,
+                            'barcode' => $extra_barcode,
+                        ]);
+                    }
+                }
+            }
+        }
+
         session()->flash('success', $this->is_edit ? 'تم تحديث السلعة وبياناتها بنجاح!' : 'تم إضافة السلعة وحساب مخزونها بنجاح!');
         $this->resetFields();
     }
 
     public function editProduct($id)
     {
-        $product = Product::findOrFail($id);
+        $product = Product::with('barcodes')->findOrFail($id);
         $this->product_id = $product->id;
         $this->name = $product->name;
         $this->barcode = $product->barcode;
@@ -172,23 +226,47 @@ new class extends Component
         $this->photo = null;
         $this->is_edit = true;
         $this->activeTab = 'basic';
+        $this->additional_barcodes = $product->barcodes->pluck('barcode')->toArray();
     }
 
     public function deleteProduct($id)
     {
         $product = Product::findOrFail($id);
-
         \App\Models\SaleItem::where('product_id', $id)->delete();
         \App\Models\PurchaseItem::where('product_id', $id)->delete();
-
+        ProductBarcode::where('product_id', $id)->delete();
         $product->delete();
-
         session()->flash('success', 'تم حذف السلعة نهائياً.');
     }
 
-    public function rendering()
+    public function render()
     {
-        if ($this->search) { $this->resetPage(); }
+        $searchTerm = $this->search;
+        $catTerm = $this->selected_category;
+
+        $productsList = Product::with('barcodes')
+            ->when($searchTerm, function ($query) use ($searchTerm) {
+                $query->where('name', 'like', '%' . $searchTerm . '%')
+                      ->orWhere('barcode', 'like', '%' . $searchTerm . '%')
+                      ->orWhere('location', 'like', '%' . $searchTerm . '%')
+                      ->orWhereHas('barcodes', function ($q) use ($searchTerm) {
+                          $q->where('barcode', 'like', '%' . $searchTerm . '%');
+                      });
+            })
+            ->when($catTerm, function ($query) use ($catTerm) {
+                $query->where('category_id', $catTerm);
+            })
+            ->paginate(10);
+
+        
+
+        return view('livewire.products.index', [
+            'productsList' => $productsList,
+            'lowStockProducts' => $lowStockProducts,
+            'categories' => Category::all(),
+            'units' => Unit::all(),
+            'suppliers' => Supplier::all(),
+        ]);
     }
 };
 ?>
@@ -203,50 +281,53 @@ new class extends Component
     {{-- ========== قسم الإحصائيات ========== --}}
     <div class="row g-3 mb-3">
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-purple">
+            <div class="card stat-card stat-card-purple h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">📦</div>
                     <div>
                         <div class="stat-label">إجمالي السلع</div>
-                        <div class="stat-value">{{ \App\Models\Product::count() }}</div>
+                        <div class="stat-value text-nowrap">{{ \App\Models\Product::count() }}</div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-green">
+            <div class="card stat-card stat-card-green h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">💰</div>
                     <div>
-                        <div class="stat-label">قيمة المخزون</div>
-                        <div class="stat-value">{{ number_format(\App\Models\Product::sum(\DB::raw('purchase_price * current_stock')), 0) }} دج</div>
+                        <div class="stat-label">قيمة المخزون (رأس المال)</div>
+                        <div class="stat-value text-nowrap">
+                            @php $capital = \App\Models\Product::sum(\DB::raw('purchase_price * current_stock')); @endphp
+                            {{ number_format($capital ?? 0, 2) }} دج
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-pink">
+            <div class="card stat-card stat-card-pink h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
-                    <div class="stat-icon-box me-3">⚠️</div>
+                    <div class="stat-icon-box me-3">🏷️</div>
                     <div>
-                        <div class="stat-label">نواقص المخزون</div>
-                        <div class="stat-value">{{ \App\Models\Product::whereColumn('current_stock', '<=', 'min_stock_alert')->count() }}</div>
+                        <div class="stat-label">القيمة الإجمالية للمخزون</div>
+                        <div class="stat-value text-nowrap">
+                            @php $totalSaleValue = \App\Models\Product::sum(\DB::raw('price_1 * current_stock')); @endphp
+                            {{ number_format($totalSaleValue ?? 0, 2) }} دج
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-blue">
+            <div class="card stat-card stat-card-blue h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">📈</div>
                     <div>
-                        <div class="stat-label">متوسط هامش الربح</div>
-                        <div class="stat-value">
-                            @php
-                                $avgMargin = \App\Models\Product::where('purchase_price', '>', 0)
-                                    ->avg(\DB::raw('((price_1 - purchase_price) / purchase_price) * 100'));
-                            @endphp
-                            {{ number_format($avgMargin ?? 0, 1) }}%
+                        <div class="stat-label">الأرباح المتوقعة</div>
+                        <div class="stat-value text-nowrap">
+                            @php $totalProfit = \App\Models\Product::sum(\DB::raw('(price_1 - purchase_price) * current_stock')); @endphp
+                            {{ number_format($totalProfit ?? 0, 2) }} دج
                         </div>
                     </div>
                 </div>
@@ -288,20 +369,26 @@ new class extends Component
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="card shadow-sm border-0 rounded-4">
-                <div class="card-header bg-white border-0 py-3">
+        
+              <div class="col-md-6">
+            <div class="card shadow-sm border-0 rounded-4 h-100">
+                <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
                     <h6 class="fw-bold mb-0">🚨 السلع منخفضة المخزون</h6>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select wire:model.live="low_stock_category" class="form-select form-select-sm" style="width: auto;">
+                            <option value="">كل الأصناف</option>
+                            @foreach(\App\Models\Category::all() as $cat)
+                                <option value="{{ $cat->id }}">{{ $cat->name }}</option>
+                            @endforeach
+                        </select>
+                        <button onclick="printLowStockList()" id="printLowStockBtn" data-products='@json($allLowStockProducts)' class="btn btn-sm btn-outline-dark fw-bold" title="طباعة وصل طلب السلع الناقصة">
+    🖨️ طباعة
+</button>
+                    </div>
                 </div>
                 <div class="card-body p-0">
-                    @php
-                        $lowStockProducts = \App\Models\Product::whereColumn('current_stock', '<=', 'min_stock_alert')
-                            ->orderBy('current_stock')
-                            ->take(8)
-                            ->get();
-                    @endphp
                     <div class="table-responsive">
-                        <table class="table table-hover align-middle mb-0 small">
+                        <table id="lowStockTable" class="table table-hover align-middle mb-0 small">
                             <thead class="table-light">
                                 <tr>
                                     <th class="px-3">السلعة</th>
@@ -325,6 +412,12 @@ new class extends Component
                         </table>
                     </div>
                 </div>
+                {{-- ✅ روابط التقسيم (Pagination) --}}
+                @if($lowStockProducts->hasPages())
+                    <div class="card-footer bg-white py-2">
+                        {{ $lowStockProducts->links() }}
+                    </div>
+                @endif
             </div>
         </div>
     </div>
@@ -381,14 +474,19 @@ new class extends Component
                                     <input type="text" wire:model="name" class="form-control form-control-sm" required placeholder="مثال: كراس 96 صفحة السلام">
                                     @error('name') <span class="text-danger text-xs d-block mt-1">{{ $message }}</span> @enderror
                                 </div>
+                                
                                 <div class="mb-2">
                                     <label class="form-label small fw-bold">الباركود <span class="text-danger">*</span></label>
                                     <div class="input-group input-group-sm">
                                         <input type="text" wire:model="barcode" wire:keydown.enter.prevent class="form-control text-start font-monospace" required placeholder="امسح بالليزر أو ولد تلقائياً">
-                                        <button type="button" wire:click="generateRandomBarcode" class="btn btn-warning fw-bold">⚡ توليد</button>
+                                        <button type="button" wire:click="generateRandomBarcode" class="btn btn-warning fw-bold" title="توليد باركود عشوائي">⚡</button>
+                                        <button type="button" class="btn btn-outline-success fw-bold" data-bs-toggle="modal" data-bs-target="#barcodesModal" title="إدارة الباركودات الإضافية">
+                                            ➕ <span class="badge bg-success rounded-pill">{{ count($additional_barcodes) }}</span>
+                                        </button>
                                     </div>
                                     @error('barcode') <span class="text-danger text-xs d-block mt-1">{{ $message }}</span> @enderror
                                 </div>
+
                                 <div class="row g-2 mb-2">
                                     <div class="col-6">
                                         <div class="d-flex justify-content-between align-items-center mb-1">
@@ -397,7 +495,7 @@ new class extends Component
                                         </div>
                                         <select wire:model="category_id" class="form-select form-select-sm">
                                             <option value="">-- عام --</option>
-                                            @foreach(\App\Models\Category::all() as $cat)
+                                            @foreach($categories as $cat)
                                                 <option value="{{ $cat->id }}">{{ $cat->name }}</option>
                                             @endforeach
                                         </select>
@@ -409,7 +507,7 @@ new class extends Component
                                         </div>
                                         <select wire:model="unit_id" class="form-select form-select-sm">
                                             <option value="">-- قطعة --</option>
-                                            @foreach(\App\Models\Unit::all() as $unit)
+                                            @foreach($units as $unit)
                                                 <option value="{{ $unit->id }}">{{ $unit->name }}</option>
                                             @endforeach
                                         </select>
@@ -423,7 +521,7 @@ new class extends Component
                                         </div>
                                         <select wire:model="supplier_id" class="form-select form-select-sm">
                                             <option value="">-- غير محدد --</option>
-                                            @foreach(\App\Models\Supplier::all() as $sup)
+                                            @foreach($suppliers as $sup)
                                                 <option value="{{ $sup->id }}">{{ $sup->name }}</option>
                                             @endforeach
                                         </select>
@@ -500,7 +598,7 @@ new class extends Component
                         <input type="text" wire:model.live="search" class="form-control form-control-sm w-70" placeholder="🔍 ابحث باسم، باركود، أو الرف...">
                         <select wire:model.live="selected_category" class="form-select form-select-sm w-30">
                             <option value="">كل الأصناف</option>
-                            @foreach(\App\Models\Category::all() as $cat)
+                            @foreach($categories as $cat)
                                 <option value="{{ $cat->id }}">{{ $cat->name }}</option>
                             @endforeach
                         </select>
@@ -520,17 +618,6 @@ new class extends Component
                             </tr>
                         </thead>
                         <tbody>
-                            @php
-                                $productsList = Product::when($this->search, function($query) {
-                                        $query->where('name', 'like', '%'.$this->search.'%')
-                                              ->orWhere('barcode', 'like', '%'.$this->search.'%')
-                                              ->orWhere('location', 'like', '%'.$this->search.'%');
-                                    })
-                                    ->when($this->selected_category, function($query) {
-                                        $query->where('category_id', $this->selected_category);
-                                    })
-                                    ->paginate(10);
-                            @endphp
                             @forelse($productsList as $product)
                                 <tr>
                                     <td>
@@ -558,9 +645,29 @@ new class extends Component
                                         </span>
                                     </td>
                                     <td>
-                                        <div class="d-flex gap-1 justify-content-center">
+                                        <div class="d-flex gap-1 justify-content-center align-items-center">
                                             <button wire:click="editProduct({{ $product->id }})" class="btn btn-sm btn-outline-primary px-1 py-0">✏️</button>
-                                            <button onclick="printBarcodeTicket('{{ addslashes($product->name) }}', '{{ $product->price_1 }}', '{{ $product->barcode }}')" class="btn btn-sm btn-warning px-1 py-0" title="طباعة التيكيت الصغير">🖨️ تيكيت</button>
+                                            
+                                            @if($product->barcodes->count() > 0)
+                                                <div class="dropdown">
+                                                    <button class="btn btn-sm btn-warning px-1 py-0 dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" title="طباعة التيكيت">
+                                                        🖨️ تيكيت
+                                                    </button>
+                                                    <ul class="dropdown-menu dropdown-menu-end" style="min-width: 8rem;">
+                                                        <li><a class="dropdown-item small py-1" href="#" onclick="printBarcodeTicket('{{ addslashes($product->name) }}', '{{ $product->price_1 }}', '{{ $product->barcode }}'); return false;">
+                                                            <span class="font-monospace">{{ $product->barcode }}</span> <span class="text-muted">(أساسي)</span>
+                                                        </a></li>
+                                                        @foreach($product->barcodes as $extra)
+                                                            <li><a class="dropdown-item small py-1" href="#" onclick="printBarcodeTicket('{{ addslashes($product->name) }}', '{{ $product->price_1 }}', '{{ $extra->barcode }}'); return false;">
+                                                                <span class="font-monospace">{{ $extra->barcode }}</span>
+                                                            </a></li>
+                                                        @endforeach
+                                                    </ul>
+                                                </div>
+                                            @else
+                                                <button onclick="printBarcodeTicket('{{ addslashes($product->name) }}', '{{ $product->price_1 }}', '{{ $product->barcode }}')" class="btn btn-sm btn-warning px-1 py-0" title="طباعة التيكيت الصغير">🖨️ تيكيت</button>
+                                            @endif
+
                                             <button wire:click="deleteProduct({{ $product->id }})" onclick="return confirm('هل أنت متأكد من حذف هذه السلعة نهائياً؟ لا يمكن التراجع!')" class="btn btn-sm btn-outline-danger px-1 py-0">🗑️</button>
                                         </div>
                                     </td>
@@ -578,7 +685,35 @@ new class extends Component
         </div>
     </div>
 
-    {{-- ====== نافذة معاينة صورة السلعة ====== --}}
+    {{-- ====== نافذة إدارة الباركودات الإضافية ====== --}}
+    <div wire:ignore.self class="modal fade" id="barcodesModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-sm">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="fw-bold mb-0">🏷️ الباركودات الإضافية</h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex flex-column gap-2">
+                        @forelse($additional_barcodes as $index => $extra_barcode)
+                            <div class="input-group input-group-sm">
+                                <input type="text" wire:model="additional_barcodes.{{ $index }}" class="form-control font-monospace" placeholder="باركود إضافي">
+                                <button type="button" wire:click="removeBarcodeField({{ $index }})" class="btn btn-outline-danger" title="حذف">✖</button>
+                            </div>
+                        @empty
+                            <div class="text-center text-muted small py-2">لا توجد باركودات إضافية حالياً</div>
+                        @endforelse
+                    </div>
+                </div>
+                <div class="modal-footer p-2 d-flex flex-column gap-2">
+                    <button type="button" wire:click="addBarcodeField" class="btn btn-outline-success btn-sm w-100">➕ إضافة حقل جديد</button>
+                    <button type="button" wire:click="saveAdditionalBarcodes" class="btn btn-primary btn-sm w-100">💾 حفظ وإغلاق</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{-- ====== نوافذ الفئات والوحدات والموردين السريعة ====== --}}
     <div class="modal fade" id="imagePreviewModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
@@ -665,6 +800,90 @@ new class extends Component
         modal.show();
     }
 
+     // ✅ دالة طباعة وصل الطلب للسلع الناقصة (تطبع الكل)
+    function printLowStockList() {
+        const btn = document.getElementById('printLowStockBtn');
+        if (!btn) return alert('زر الطباعة غير موجود!');
+        
+        // قراءة كل البيانات من الزر
+        const products = JSON.parse(btn.dataset.products);
+        
+        if (products.length === 0) return alert('لا توجد سلع ناقصة للطباعة حالياً!');
+        
+        // بناء صفوف الجدول
+        let rows = '';
+        products.forEach(product => {
+            rows += `
+                <tr>
+                    <td style="text-align: right; font-weight: bold;">${product.name}</td>
+                    <td style="font-family: monospace; color: #6c757d;">${product.barcode}</td>
+                    <td style="text-align: center;">
+                        <span style="background: #dc3545; color: white; padding: 2px 8px; border-radius: 10px; font-size: 12px;">${product.current_stock}</span>
+                    </td>
+                    <td style="text-align: center; color: #6c757d;">${product.min_stock_alert}</td>
+                </tr>
+            `;
+        });
+        
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html dir="rtl" lang="ar">
+            <head>
+                <meta charset="UTF-8">
+                <title>وصل طلب السلع الناقصة</title>
+                <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+                <style>
+                    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; padding: 30px; }
+                    h3 { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+                    .header-info { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 14px; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+                    th, td { border: 1px solid #dee2e6; padding: 10px; text-align: center; }
+                    th { background-color: #f8f9fa; }
+                    .footer-signatures { display: flex; justify-content: space-around; margin-top: 50px; text-align: center; }
+                </style>
+            </head>
+            <body>
+                <h3>وصل طلب السلع الناقصة</h3>
+                <div class="header-info">
+                    <span>التاريخ: ${new Date().toLocaleDateString('fr-DZ')}</span>
+                    <span>المؤسسة: مكتبة السلام</span>
+                </div>
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th>السلعة</th>
+                            <th>الباركود</th>
+                            <th>المخزون</th>
+                            <th>الحد الأدنى</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+                <div class="footer-signatures">
+                    <div>
+                        <p>توقيع المدير</p>
+                        <br><br>
+                        <span>_____________</span>
+                    </div>
+                    <div>
+                        <p>توقيع المسؤول</p>
+                        <br><br>
+                        <span>_____________</span>
+                    </div>
+                </div>
+            </body>
+            </html>
+        `);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+            printWindow.print();
+        }, 500);
+    }
+
     function printBarcodeTicket(name, price, barcode) {
         const printWindow = window.open('', '_blank', 'width=450,height=300');
         
@@ -675,58 +894,14 @@ new class extends Component
                 <meta charset="UTF-8">
                 <title>طباعة - ${name}</title>
                 <style>
-                    @page { 
-                        size: 40mm 20mm; 
-                        margin: 0; 
-                    }
-                    * { 
-                        box-sizing: border-box; 
-                        margin: 0; 
-                        padding: 0; 
-                    }
-                    body {
-                        font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
-                        direction: rtl;
-                        text-align: center;
-                        width: 40mm;
-                        height: 20mm;
-                        padding: 1mm 1.5mm;
-                        background: #fff;
-                        overflow: hidden;
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: space-between;
-                        align-items: center;
-                    }
-                    .product-name {
-                        font-weight: bold;
-                        font-size: 8px;
-                        line-height: 1;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
-                        width: 37mm;
-                        color: #000;
-                    }
-                    .price {
-                        font-size: 11px;
-                        font-weight: 800;
-                        color: #000;
-                        line-height: 1;
-                        margin: 0.5mm 0;
-                    }
+                    @page { size: 40mm 20mm; margin: 0; }
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    body { font-family: 'Segoe UI', Tahoma, Arial, sans-serif; direction: rtl; text-align: center; width: 40mm; height: 20mm; padding: 1mm 1.5mm; background: #fff; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; align-items: center; }
+                    .product-name { font-weight: bold; font-size: 8px; line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 37mm; color: #000; }
+                    .price { font-size: 11px; font-weight: 800; color: #000; line-height: 1; margin: 0.5mm 0; }
                     .price-currency { font-size: 7px; font-weight: normal; }
-                    .barcode-container {
-                        width: 37mm;
-                        height: 10mm;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                    }
-                    .barcode-container svg {
-                        width: 100% !important;
-                        height: 10mm !important;
-                    }
+                    .barcode-container { width: 37mm; height: 10mm; display: flex; justify-content: center; align-items: center; }
+                    .barcode-container svg { width: 100% !important; height: 10mm !important; }
                 </style>
             </head>
             <body>
@@ -738,37 +913,20 @@ new class extends Component
                 <div class="barcode-container">
                     <svg id="barcode-svg"></svg>
                 </div>
-                
                 <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.12.3/dist/JsBarcode.all.min.js"><\/script>
                 <script>
                     window.onload = function() {
                         try {
                             JsBarcode("#barcode-svg", "${barcode}", {
-                                format: "CODE128",
-                                width: 1,
-                                height: 25,
-                                displayValue: true,
-                                fontSize: 8,
-                                textMargin: 0,
-                                margin: 0,
-                                background: "#ffffff",
-                                lineColor: "#000000"
+                                format: "CODE128", width: 1, height: 25, displayValue: true, fontSize: 8, textMargin: 0, margin: 0, background: "#ffffff", lineColor: "#000000"
                             });
-                            setTimeout(function() {
-                                window.print();
-                                setTimeout(function() { window.close(); }, 500);
-                            }, 300);
-                        } catch(e) {
-                            console.error("Barcode error:", e);
-                            window.print();
-                            window.close();
-                        }
+                            setTimeout(function() { window.print(); setTimeout(function() { window.close(); }, 500); }, 300);
+                        } catch(e) { console.error("Barcode error:", e); window.print(); window.close(); }
                     };
                 <\/script>
             </body>
             </html>
         `;
-        
         printWindow.document.open();
         printWindow.document.write(htmlContent);
         printWindow.document.close();
@@ -800,99 +958,28 @@ new class extends Component
         .text-xs { font-size: 0.75rem; }
 
         .product-tabs { border-bottom: 1px solid #eee; }
-        .product-tabs .nav-link {
-            border: none;
-            background: none;
-            color: #8a97a3;
-            font-weight: 700;
-            font-size: .85rem;
-            padding: .55rem .9rem;
-            border-radius: 8px 8px 0 0;
-        }
-        .product-tabs .nav-link.active {
-            color: #872061;
-            background: #f8f0f5;
-            border-bottom: 3px solid #872061;
-        }
+        .product-tabs .nav-link { border: none; background: none; color: #8a97a3; font-weight: 700; font-size: .85rem; padding: .55rem .9rem; border-radius: 8px 8px 0 0; }
+        .product-tabs .nav-link.active { color: #872061; background: #f8f0f5; border-bottom: 3px solid #872061; }
 
-        .photo-upload-box {
-            position: relative;
-            width: 100%;
-            height: 140px;
-            border: 2px dashed #d8dee3;
-            border-radius: 12px;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #fafbfc;
-            cursor: pointer;
-            transition: border-color .2s ease;
-        }
+        .photo-upload-box { position: relative; width: 100%; height: 140px; border: 2px dashed #d8dee3; border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #fafbfc; cursor: pointer; transition: border-color .2s ease; }
         .photo-upload-box:hover { border-color: #0d7cb5; }
-        .photo-input {
-            position: absolute;
-            inset: 0;
-            opacity: 0;
-            cursor: pointer;
-        }
-        .photo-preview {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
+        .photo-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .photo-preview { width: 100%; height: 100%; object-fit: cover; }
         .photo-placeholder { text-align: center; }
 
-        .row-thumb {
-            width: 42px;
-            height: 42px;
-            object-fit: cover;
-            border-radius: 8px;
-            cursor: pointer;
-        }
-        .row-thumb-placeholder {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #f1f3f5;
-            color: #adb5bd;
-            font-size: 1.1rem;
-        }
+        .row-thumb { width: 42px; height: 42px; object-fit: cover; border-radius: 8px; cursor: pointer; }
+        .row-thumb-placeholder { display: flex; align-items: center; justify-content: center; background: #f1f3f5; color: #adb5bd; font-size: 1.1rem; }
 
-        .stat-card {
-            border-radius: 16px;
-            border: none;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .stat-card:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important;
-        }
+        .stat-card { border-radius: 16px; border: none; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+        .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.15) !important; }
         .stat-card-purple { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
         .stat-card-green  { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
         .stat-card-pink   { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); }
         .stat-card-blue   { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
 
-        .stat-icon-box {
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            background: rgba(255,255,255,0.2);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            flex-shrink: 0;
-        }
-        .stat-label {
-            font-size: 0.8rem;
-            color: rgba(255,255,255,0.8);
-        }
-        .stat-value {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #fff;
-        }
+        .stat-icon-box { width: 48px; height: 48px; border-radius: 12px; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+        .stat-label { font-size: 0.8rem; color: rgba(255,255,255,0.8); }
+        .stat-value { font-size: 1.4rem; font-weight: 700; color: #fff; }
         .rounded-4 { border-radius: 16px !important; }
     </style>
-</div>
+</div> 

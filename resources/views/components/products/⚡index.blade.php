@@ -201,49 +201,62 @@ new class extends Component
         </div>
     @endif
 
-    {{-- ========== قسم الإحصائيات ========== --}}
+          {{-- ========== قسم الإحصائيات ========== --}}
     <div class="row g-3 mb-3">
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-purple">
+            <div class="card stat-card stat-card-purple h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">📦</div>
                     <div>
                         <div class="stat-label">إجمالي السلع</div>
-                        <div class="stat-value">{{ \App\Models\Product::count() }}</div>
+                        <div class="stat-value text-nowrap">{{ \App\Models\Product::count() }}</div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-green">
+            <div class="card stat-card stat-card-green h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">💰</div>
                     <div>
-                        <div class="stat-label">قيمة المخزون</div>
-                        <div class="stat-value">{{ number_format(\App\Models\Product::sum(\DB::raw('purchase_price * current_stock')), 0) }} دج</div>
+                        <div class="stat-label">قيمة المخزون (رأس المال)</div>
+                        <div class="stat-value text-nowrap">
+                            @php
+                                // ✅ رأس المال = سعر الشراء × الكمية
+                                $capital = \App\Models\Product::sum(\DB::raw('purchase_price * current_stock'));
+                            @endphp
+                            {{ number_format($capital ?? 0, 0) }} دج
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-pink">
+            <div class="card stat-card stat-card-pink h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
-                    <div class="stat-icon-box me-3">⚠️</div>
+                    <div class="stat-icon-box me-3">🏷️</div>
                     <div>
-                        <div class="stat-label">نواقص المخزون</div>
-                        <div class="stat-value">{{ \App\Models\Product::whereColumn('current_stock', '<=', 'min_stock_alert')->count() }}</div>
+                        <div class="stat-label">القيمة الإجمالية للمخزون</div>
+                        <div class="stat-value text-nowrap">
+                            @php
+                                // ✅ القيمة الإجمالية = سعر البيع × الكمية
+                                $totalSaleValue = \App\Models\Product::sum(\DB::raw('price_1 * current_stock'));
+                            @endphp
+                            {{ number_format($totalSaleValue ?? 0, 0) }} دج
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
         <div class="col-md-3 col-sm-6">
-            <div class="card stat-card stat-card-blue">
+            <div class="card stat-card stat-card-blue h-100">
                 <div class="card-body d-flex align-items-center text-white p-3">
                     <div class="stat-icon-box me-3">📈</div>
                     <div>
                         <div class="stat-label">الأرباح المتوقعة</div>
-                        <div class="stat-value">
+                        <div class="stat-value text-nowrap">
                             @php
+                                // ✅ الأرباح المتوقعة = (سعر البيع - سعر الشراء) × الكمية
                                 $totalProfit = \App\Models\Product::sum(\DB::raw('(price_1 - purchase_price) * current_stock'));
                             @endphp
                             {{ number_format($totalProfit ?? 0, 2) }} دج
@@ -288,20 +301,25 @@ new class extends Component
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="card shadow-sm border-0 rounded-4">
-                <div class="card-header bg-white border-0 py-3">
+              <div class="col-md-6">
+            <div class="card shadow-sm border-0 rounded-4 h-100">
+                <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
                     <h6 class="fw-bold mb-0">🚨 السلع منخفضة المخزون</h6>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select wire:model.live="low_stock_category" class="form-select form-select-sm" style="width: auto;">
+                            <option value="">كل الأصناف</option>
+                            @foreach(\App\Models\Category::all() as $cat)
+                                <option value="{{ $cat->id }}">{{ $cat->name }}</option>
+                            @endforeach
+                        </select>
+                        <button onclick="printLowStockList()" class="btn btn-sm btn-outline-dark fw-bold" title="طباعة وصل طلب السلع الناقصة">
+                            🖨️ طباعة
+                        </button>
+                    </div>
                 </div>
                 <div class="card-body p-0">
-                    @php
-                        $lowStockProducts = \App\Models\Product::whereColumn('current_stock', '<=', 'min_stock_alert')
-                            ->orderBy('current_stock')
-                            ->take(8)
-                            ->get();
-                    @endphp
                     <div class="table-responsive">
-                        <table class="table table-hover align-middle mb-0 small">
+                        <table id="lowStockTable" class="table table-hover align-middle mb-0 small">
                             <thead class="table-light">
                                 <tr>
                                     <th class="px-3">السلعة</th>
@@ -325,6 +343,12 @@ new class extends Component
                         </table>
                     </div>
                 </div>
+                {{-- ✅ روابط التقسيم (Pagination) --}}
+                @if($lowStockProducts->hasPages())
+                    <div class="card-footer bg-white py-2">
+                        {{ $lowStockProducts->links() }}
+                    </div>
+                @endif
             </div>
         </div>
     </div>

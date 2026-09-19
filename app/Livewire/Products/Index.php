@@ -7,6 +7,7 @@ use Livewire\WithFileUploads;
 use Livewire\WithPagination;
 use App\Models\Product;
 use App\Models\Category;
+use App\Models\ProductBarcode;
 use App\Models\Unit;
 use App\Models\Supplier;
 use App\Models\ProductDetail;
@@ -21,7 +22,7 @@ class Index extends Component
     // Recherche et filtrage
     public $search = '';
     public $selected_category = '';
-
+     public $low_stock_category = '';
     // Données de l'article
     public $product_id, $name, $barcode, $category_id, $unit_id, $supplier_id, $location;
     public $purchase_price = 0;
@@ -31,7 +32,8 @@ class Index extends Component
     public $price_4 = 0;
     public $current_stock = 0;
     public $min_stock_alert = 5;
-
+        // مصفوفة الباركودات الإضافية
+    public $additional_barcodes = [];
     // Système de boîte / carton
     public $box_barcode;
     public $package_items_count = 1; 
@@ -80,7 +82,39 @@ class Index extends Component
         $this->dispatch('close-modal', modalId: 'quickSupplierModal');
         session()->flash('success', 'Nouveau fournisseur ajouté avec succès !');
     }
+    // ✅ دالة إضافة حقل باركود إضافي جديد
+    public function addBarcodeField()
+    {
+        $this->additional_barcodes[] = '';
+    }
 
+       // ✅ دالة حذف حقل باركود إضافي
+    public function removeBarcodeField($index)
+    {
+        unset($this->additional_barcodes[$index]);
+        $this->additional_barcodes = array_values($this->additional_barcodes);
+    }
+
+    // ✅ دالة حفظ الباركودات من النافذة المنبثقة
+    public function saveAdditionalBarcodes()
+    {
+        // إذا كان المنتج موجوداً مسبقاً (في وضع التعديل)، نحفظ في القاعدة مباشرة
+        if ($this->product_id) {
+            ProductBarcode::where('product_id', $this->product_id)->delete();
+            foreach ($this->additional_barcodes as $extraBarcode) {
+                if (!empty(trim($extraBarcode))) {
+                    ProductBarcode::create([
+                        'product_id' => $this->product_id,
+                        'barcode' => trim($extraBarcode),
+                    ]);
+                }
+            }
+            session()->flash('success', 'تم حفظ الباركودات الإضافية بنجاح!');
+        }
+
+        // إغلاق النافذة المنبثقة في الحالتين (سواء منتج جديد أو تعديل)
+        $this->dispatch('close-modal', modalId: 'barcodesModal');
+    }
     public function resetFields()
     {
         $this->reset([
@@ -90,10 +124,13 @@ class Index extends Component
             'sku', 'type', 'material', 'colors_input', 'gallery_images',
             'details_content', 'details_published',
             'box_barcode', 'package_items_count', 'input_type', 'box_count'
+            ,'additional_barcodes'
         ]);
         $this->activeTab = 'basic';
         $this->package_items_count = 1;
         $this->input_type = 'pieces';
+        $this->additional_barcodes = [];
+         
         $this->dispatch('editor-reset');
     }
 
@@ -196,7 +233,20 @@ class Index extends Component
                 'colors' => $colorsArray,
             ]
         );
+        if ($this->is_edit) {
+            ProductBarcode::where('product_id', $product->id)->delete();
+        }
 
+        if (!empty($this->additional_barcodes)) {
+            foreach ($this->additional_barcodes as $extraBarcode) {
+                if (!empty(trim($extraBarcode))) {
+                    ProductBarcode::create([
+                        'product_id' => $product->id,
+                        'barcode' => trim($extraBarcode),
+                    ]);
+                }
+            }
+        }
         if ($this->details_content || $this->details_published) {
             ProductDetail::updateOrCreate(
                 ['product_id' => $product->id],
@@ -213,7 +263,7 @@ class Index extends Component
 
     public function editProduct($id)
     {
-        //$product = Product::with('details')->findOrFail($id);
+       
         $product = Product::findOrFail($id);
         $this->product_id = $product->id;
         $this->name = $product->name;
@@ -235,7 +285,9 @@ class Index extends Component
         $this->box_barcode = $product->box_barcode;
         $this->package_items_count = $product->package_items_count;
         $this->input_type = 'pieces'; 
-
+        $this->additional_barcodes = ProductBarcode::where('product_id', $product->id)
+            ->pluck('barcode')
+            ->toArray();
         $this->sku = $product->sku;
         $this->type = $product->type;
         $this->material = $product->material;
@@ -276,24 +328,46 @@ class Index extends Component
         $this->resetPage();
     }
 
-    public function render()
+       public function render()
     {
         $searchTerm = $this->search;
         $catTerm = $this->selected_category;
 
-        $productsList = Product::when($searchTerm, function ($query) use ($searchTerm) {
+        $productsList = Product::with('barcodes')
+            ->when($searchTerm, function ($query) use ($searchTerm) {
                 $query->where('name', 'like', '%' . $searchTerm . '%')
                       ->orWhere('barcode', 'like', '%' . $searchTerm . '%')
                       ->orWhere('box_barcode', 'like', '%' . $searchTerm . '%')
-                      ->orWhere('location', 'like', '%' . $searchTerm . '%');
+                      ->orWhere('location', 'like', '%' . $searchTerm . '%')
+                      ->orWhereHas('barcodes', function ($q) use ($searchTerm) {
+                          $q->where('barcode', 'like', '%' . $searchTerm . '%');
+                      });
             })
             ->when($catTerm, function ($query) use ($catTerm) {
                 $query->where('category_id', $catTerm);
             })
             ->paginate(10);
 
+             // ✅ جلب السلع منخفضة المخزون مع فلترة الصنف وتقسيمها 5 per page (للعرض)
+        $lowStockProducts = Product::whereColumn('current_stock', '<=', 'min_stock_alert')
+            ->when($this->low_stock_category, function ($query) {
+                $query->where('category_id', $this->low_stock_category);
+            })
+            ->orderBy('current_stock')
+            ->paginate(5);
+
+        // ✅ جلب كل السلع الناقصة (للطباعة)
+        $allLowStockProducts = Product::whereColumn('current_stock', '<=', 'min_stock_alert')
+            ->when($this->low_stock_category, function ($query) {
+                $query->where('category_id', $this->low_stock_category);
+            })
+            ->orderBy('current_stock')
+            ->get(['name', 'barcode', 'current_stock', 'min_stock_alert']);
+
         return view('livewire.products.index', [
             'productsList' => $productsList,
+            'lowStockProducts' => $lowStockProducts,
+            'allLowStockProducts' => $allLowStockProducts, // ✅ متغير الطباعة
             'categories' => Category::all(),
             'units' => Unit::all(),
             'suppliers' => Supplier::all(),

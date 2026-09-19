@@ -189,7 +189,7 @@ new class extends Component
     // دوال البحث والسلة (كما هي)
     // ═══════════════════════════════════════════════
 
-    public function updatedBarcode()
+       public function updatedBarcode()
     {
         $term = trim($this->barcode);
 
@@ -199,9 +199,13 @@ new class extends Component
             return;
         }
 
+        // ✅ البحث في الاسم، الباركود الأساسي، باركود العلبة، والباركودات الإضافية
         $this->suggestions = Product::where('name', 'like', "%{$term}%")
             ->orWhere('barcode', 'like', "%{$term}%")
             ->orWhere('box_barcode', 'like', "%{$term}%")
+            ->orWhereHas('barcodes', function ($q) use ($term) {
+                $q->where('barcode', 'like', "%{$term}%");
+            })
             ->limit(8)
             ->get(['id', 'name', 'barcode', 'price_1', 'current_stock'])
             ->toArray();
@@ -261,8 +265,11 @@ new class extends Component
 
         if (empty($this->barcode)) return;
 
-        $product = Product::where('barcode', $this->barcode)
+              $product = Product::where('barcode', $this->barcode)
                           ->orWhere('box_barcode', $this->barcode)
+                          ->orWhereHas('barcodes', function ($q) {
+                              $q->where('barcode', $this->barcode);
+                          })
                           ->first();
 
         if ($product) {
