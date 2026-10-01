@@ -13,7 +13,11 @@ new class extends Component
 
     protected $paginationTheme = 'bootstrap';
 
+    // متغيرات البحث والفلترة
     public $search = '';
+    public $from_date = null;
+    public $to_date = null;
+    
     public $service_id, $service_type, $price = 0, $quantity = 1, $selected_customer_id, $payment_method = 'full', $paid_amount = 0;
     public $is_edit = false;
     
@@ -23,9 +27,24 @@ new class extends Component
     public $fav_service_price = 0;
     public $fav_service_quantity = 1;
 
+    // ✅ تعيين تاريخ اليوم تلقائياً عند فتح الصفحة
     public function mount()
     {
+        $this->from_date = now()->format('Y-m-d');
+        $this->to_date = now()->format('Y-m-d');
+        
         $this->loadFavoriteServices();
+    }
+
+    // ✅ دوال إعادة الترقيم عند تغيير الفلاتر
+    public function updatingSearch() { $this->resetPage(); }
+    public function updatingFromDate() { $this->resetPage(); }
+    public function updatingToDate() { $this->resetPage(); }
+
+    public function clearDates()
+    {
+        $this->from_date = null;
+        $this->to_date = null;
     }
 
     public function resetFields()
@@ -51,7 +70,6 @@ new class extends Component
         $this->showFavoritesManager = !$this->showFavoritesManager;
     }
 
-    // ✅ إضافة قالب مفضلة جديد (بدون الحقل المحذوف service_id)
     public function addFavoriteService()
     {
         $this->validate([
@@ -63,7 +81,6 @@ new class extends Component
             'fav_service_price.required' => 'السعر مطلوب.',
         ]);
 
-        // ✅ حفظ كقالب مستقل تماماً بعد حذف عمود service_id
         FavoriteService::create([
             'user_id' => auth()->id() ?? 1,
             'service_type' => $this->fav_service_type,
@@ -87,20 +104,16 @@ new class extends Component
         }
     }
 
-    // ✅ اختيار قالب لملء النموذج السفلي
     public function useFavoriteService($favId)
     {
         $fav = FavoriteService::find($favId);
         
         if ($fav) {
             $this->resetFields();
-            
             $this->service_type = $fav->service_type;
             $this->price = (float) $fav->price;
             $this->quantity = (int) $fav->quantity;
-            
             $this->calculatePaidAmount();
-            
             session()->flash('success', '✨ تم تحميل القالب! اضغط "تأكيد وترحيل المعاملة" مباشرة.');
         }
     }
@@ -222,11 +235,6 @@ new class extends Component
             session()->flash('error', 'حدث خطأ أثناء الحذف.');
         }
     }
-
-    public function rendering()
-    {
-        if ($this->search) { $this->resetPage(); }
-    }
 };
 ?>
 
@@ -281,7 +289,7 @@ new class extends Component
             <div class="card-header bg-white border-0 py-2 d-flex justify-content-between align-items-center">
                 <h6 class="fw-bold mb-0 text-danger">
                     ⭐ خدمات سريعة
-                    <span class="small text-muted fw-normal">— اضغط + لتحميلها في النموذج فوراً</span>
+                    <span class="small text-muted fw-normal">— اضغط على المربع لتحميله في النموذج فوراً</span>
                 </h6>
                 <span class="badge bg-danger-subtle text-danger">{{ count($favorites_services) }} عنصر</span>
             </div>
@@ -289,7 +297,7 @@ new class extends Component
                 <div class="row g-2">
                     @foreach ($favorites_services as $fav)
                         <div class="col-6 col-sm-4 col-md-3">
-                            <div class="favorite-card" style="--fav-color: #6f42c1">
+                            <div wire:click="useFavoriteService({{ $fav->id }})" class="favorite-card" style="--fav-color: #6f42c1">
                                 <div class="favorite-icon">⚙️</div>
                                 <div class="favorite-name">{{ $fav->service_type }}</div>
                                 <div class="favorite-price">
@@ -298,12 +306,10 @@ new class extends Component
                                     @endif
                                     {{ number_format($fav->price, 2) }} دج
                                 </div>
-                                <button type="button" wire:click="useFavoriteService({{ $fav->id }})" class="favorite-add-btn" title="تحميل في النموذج">
-                                    <span>+</span>
-                                </button>
+                                <div class="click-overlay"><span>+</span></div>
                                 
                                 @if($showFavoritesManager)
-                                <button type="button" wire:click="deleteFavoriteService({{ $fav->id }})" class="favorite-del-btn" title="حذف من المفضلة">
+                                <button type="button" wire:click.stop="deleteFavoriteService({{ $fav->id }})" class="favorite-del-btn" title="حذف من المفضلة">
                                     <span>✕</span>
                                 </button>
                                 @endif
@@ -385,22 +391,50 @@ new class extends Component
         </div>
 
         <div class="col-md-8">
-            <div class="d-flex justify-content-between align-items-center mb-3">
-                <input type="text" wire:model.live="search" class="form-control border-0 shadow-sm rounded-3 w-50" placeholder="🔍 ابحث في سجل الخدمات والبحوث السابقة...">
-                <div class="text-muted small fw-bold">إجمالي الحركات الموثقة: {{ \App\Models\Service::count() }}</div>
+            <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+                <input type="text" wire:model.live="search" class="form-control border-0 shadow-sm rounded-3" style="max-width: 300px;" placeholder="🔍 ابحث في سجل الخدمات...">
+                
+                {{-- ✅ فلتر التاريخ --}}
+                <div class="d-flex gap-2 align-items-center">
+                    <div class="d-flex align-items-center gap-1">
+                        <label class="small text-muted mb-0">من:</label>
+                        <input type="date" wire:model.live="from_date" class="form-control form-control-sm">
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <label class="small text-muted mb-0">إلى:</label>
+                        <input type="date" wire:model.live="to_date" class="form-control form-control-sm">
+                    </div>
+                    @if($from_date || $to_date)
+                        <button wire:click="clearDates" class="btn btn-outline-secondary btn-sm">مسح</button>
+                    @endif
+                </div>
             </div>
 
             <div class="row g-3">
                 @php
-                    $servicesList = Service::with(['customer', 'user'])
+                    $baseQuery = Service::with(['customer', 'user'])
                         ->where(function($query) {
                             $query->where('service_type', 'like', '%'.$this->search.'%')
                                   ->orWhereHas('customer', function($q) {
                                       $q->where('name', 'like', '%'.$this->search.'%');
                                   });
-                        })
-                        ->orderBy('created_at', 'desc')
-                        ->paginate(6); 
+                        });
+
+                    if ($this->from_date) {
+                        $baseQuery->whereDate('created_at', '>=', $this->from_date);
+                    }
+                    if ($this->to_date) {
+                        $baseQuery->whereDate('created_at', '<=', $this->to_date);
+                    }
+
+                    // حساب المجموع الكلي (الأرباح هنا 100% لأنها خدمات)
+                    $sumQuery = clone $baseQuery;
+                    $total_sales = (clone $baseQuery)->selectRaw('SUM(price * quantity) as aggregate')->value('aggregate') ?? 0;
+                    $total_paid = (clone $baseQuery)->sum('paid_amount');
+                    $total_debt = $total_sales - $total_paid;
+                    $total_profit = $total_sales; // أرباح الخدمات تعتبر 100%
+
+                    $servicesList = $baseQuery->orderBy('created_at', 'desc')->paginate(6); 
                 @endphp
 
                 @forelse($servicesList as $serv)
@@ -450,6 +484,31 @@ new class extends Component
                 @endforelse
             </div>
 
+            {{-- ✅ جدول المجموع الكلي للأرباح والمدفوعات --}}
+            @if($servicesList->isNotEmpty())
+            <div class="p-3 bg-light border-top mt-4 rounded-3 shadow-sm">
+                <h6 class="fw-bold text-dark mb-2 text-center">📊 المجموع الكلي للخدمات (حسب الفلتر المطبق)</h6>
+                <table class="table table-sm table-bordered table-hover mb-0 text-center small">
+                    <thead class="table-light">
+                        <tr>
+                            <th>إجمالي الخدمات</th>
+                            <th>المحصّل (مدفوع)</th>
+                            <th>الديون المترتبة</th>
+                            <th>صافي الأرباح (100%)</th>
+                        </tr>
+                    </thead>
+                    <tbody class="font-monospace fw-bold">
+                        <tr>
+                            <td class="text-success">{{ number_format($total_sales, 2) }} دج</td>
+                            <td class="text-primary">{{ number_format($total_paid, 2) }} دج</td>
+                            <td class="text-danger">{{ number_format($total_debt, 2) }} دج</td>
+                            <td class="text-success bg-success-subtle">{{ number_format($total_profit, 2) }} دج</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            @endif
+
             <div class="mt-4">
                 {{ $servicesList->links() }}
             </div>
@@ -465,22 +524,24 @@ new class extends Component
 
     .favorite-card {
         position: relative; background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
-        border: 2px solid var(--fav-color, #872061); border-radius: 12px; padding: 12px 8px 8px;
+        border: 2px solid var(--fav-color, #872061); border-radius: 12px; padding: 15px 10px;
         text-align: center; cursor: pointer; transition: all 0.2s ease; height: 100%; min-height: 110px;
         display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden;
+        user-select: none;
     }
     .favorite-card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); border-color: var(--fav-color, #872061); }
+    .favorite-card:active { transform: scale(0.97); }
     .favorite-icon { font-size: 1.8rem; margin-bottom: 4px; line-height: 1; }
     .favorite-name { font-size: 0.78rem; font-weight: 700; color: #333; line-height: 1.2; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .favorite-price { font-size: 0.75rem; font-weight: 600; color: var(--fav-color, #872061); font-family: monospace; }
     
-    .favorite-add-btn {
-        position: absolute; top: 4px; left: 4px; width: 24px; height: 24px; border-radius: 50%; 
-        background: var(--fav-color, #872061); color: #fff; border: none; display: flex; 
-        align-items: center; justify-content: center; font-size: 1rem; font-weight: bold; cursor: pointer; z-index: 2;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.2); transition: all 0.15s ease;
+    .click-overlay {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(255, 255, 255, 0.7); display: flex; align-items: center; justify-content: center;
+        font-size: 3rem; font-weight: bold; color: var(--fav-color, #872061); opacity: 0;
+        transition: opacity 0.1s; pointer-events: none;
     }
-    .favorite-add-btn:hover { transform: scale(1.15); }
+    .favorite-card:active .click-overlay { opacity: 1; transform: scale(1.2); }
 
     .favorite-del-btn {
         position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; 

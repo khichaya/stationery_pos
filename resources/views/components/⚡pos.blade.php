@@ -7,6 +7,7 @@ use App\Models\Sale;
 use App\Models\Favorite;
 use App\Models\InstitutionSetting;
 use Illuminate\Support\Facades\DB;
+use Livewire\Attributes\On;
 
 new class extends Component
 {
@@ -19,7 +20,7 @@ new class extends Component
     public $discount_amount = 0;
     public $paid_amount = 0;
     public $payment_method = 'full';
-
+    public $suspendedCarts = [];
     public $total_amount = 0;
     public $final_total = 0;
 
@@ -30,6 +31,11 @@ new class extends Component
 
     // بيانات اخر فاتورة
     public $last_sale = null;
+
+    // خصائص الارباح
+    public $total_capital = 0;
+    public $total_profit = 0;
+    public $profit_details = [];
 
     // ═══════════════════════════════════════════════
     // خصائص نظام المفضلات
@@ -49,7 +55,7 @@ new class extends Component
     {
         $this->customers = Customer::all();
         $this->loadFavorites();
-
+         $this->loadSuspendedCarts();
         if (session()->has('edit_cart')) {
             $this->cart = session()->get('edit_cart');
             $this->selected_customer_id = session()->get('edit_customer_id');
@@ -57,15 +63,12 @@ new class extends Component
             $this->payment_method = session()->get('edit_payment_method');
             $this->paid_amount = session()->get('edit_paid_amount');
 
-            // ═══════════════════════════════════════════════
-            // 🛠️ FIX: التأكد من وجود is_favorite و is_custom في كل عنصر
-            // ═══════════════════════════════════════════════
             foreach ($this->cart as $key => &$item) {
                 $item['is_favorite'] = $item['is_favorite'] ?? false;
                 $item['is_custom'] = $item['is_custom'] ?? false;
                 $item['favorite_id'] = $item['favorite_id'] ?? null;
             }
-            unset($item); // مهم: فك المرجع
+            unset($item);
 
             $this->calculateTotals();
 
@@ -186,10 +189,10 @@ new class extends Component
     }
 
     // ═══════════════════════════════════════════════
-    // دوال البحث والسلة (كما هي)
+    // دوال البحث والسلة
     // ═══════════════════════════════════════════════
 
-       public function updatedBarcode()
+    public function updatedBarcode()
     {
         $term = trim($this->barcode);
 
@@ -199,7 +202,6 @@ new class extends Component
             return;
         }
 
-        // ✅ البحث في الاسم، الباركود الأساسي، باركود العلبة، والباركودات الإضافية
         $this->suggestions = Product::where('name', 'like', "%{$term}%")
             ->orWhere('barcode', 'like', "%{$term}%")
             ->orWhere('box_barcode', 'like', "%{$term}%")
@@ -265,12 +267,12 @@ new class extends Component
 
         if (empty($this->barcode)) return;
 
-              $product = Product::where('barcode', $this->barcode)
-                          ->orWhere('box_barcode', $this->barcode)
-                          ->orWhereHas('barcodes', function ($q) {
-                              $q->where('barcode', $this->barcode);
-                          })
-                          ->first();
+        $product = Product::where('barcode', $this->barcode)
+                    ->orWhere('box_barcode', $this->barcode)
+                    ->orWhereHas('barcodes', function ($q) {
+                        $q->where('barcode', $this->barcode);
+                    })
+                    ->first();
 
         if ($product) {
             $this->addToCart($product);
@@ -367,6 +369,62 @@ new class extends Component
         $this->calculateTotals();
     }
 
+    // دالة حذف آخر عنصر مضافة للسلة (اختصار Suppr)
+    #[On('deleteLastItem')]
+    public function deleteLastItem()
+    {
+        if (!empty($this->cart)) {
+            $keys = array_keys($this->cart);
+            $lastKey = end($keys);
+            unset($this->cart[$lastKey]);
+            $this->calculateTotals();
+            session()->flash('success', '🗑️ تم حذف آخر عنصر من السلة!');
+        }
+    }
+
+       // دالة حساب وعرض الأرباح التفصيلية (اختصار F9)
+    #[On('showProfits')]
+    public function showProfits()
+    {
+        $this->total_capital = 0;
+        $this->total_profit = 0;
+        $this->profit_details = [];
+
+        $productIds = array_filter(array_column($this->cart, 'product_id'));
+        $products = Product::whereIn('id', $productIds)->get()->keyBy('id');
+
+        foreach ($this->cart as $item) {
+            $cost = 0;
+            
+            // إذا كان العنصر سلعة مسجلة في المخزن
+            if ($item['product_id'] && isset($products[$item['product_id']])) {
+                $product = $products[$item['product_id']];
+                $cost = $product->cost_price ?? $product->purchase_price ?? 0; 
+            } 
+            // ✅ إذا كان خدمة سريعة (بدون product_id): نحسب التكلفة 70% والربح 30%
+            elseif (empty($item['product_id'])) {
+                $cost = $item['price'] * 0.70; // 70% راس مال
+            }
+
+            $item_total_cost = $cost * $item['quantity'];
+            $item_total_price = $item['price'] * $item['quantity'];
+            $item_profit = $item_total_price - $item_total_cost;
+
+            $this->total_capital += $item_total_cost;
+            $this->total_profit += $item_profit;
+
+            $this->profit_details[] = [
+                'name' => $item['name'],
+                'qty' => $item['quantity'],
+                'cost' => $cost,
+                'price' => $item['price'],
+                'profit' => $item_profit
+            ];
+        }
+
+        $this->dispatch('show-profit-modal');
+    }
+
     public function calculateTotals()
     {
         $this->total_amount = array_sum(array_column($this->cart, 'subtotal'));
@@ -385,6 +443,7 @@ new class extends Component
         $this->calculateTotals();
     }
 
+    #[On('shortcut-checkout')]
     public function checkout()
     {
         if (empty($this->cart)) {
@@ -491,6 +550,54 @@ new class extends Component
             session()->flash('error', 'حدث خطأ اثناء معالجة العملية: ' . $e->getMessage());
         }
     }
+        // دوال الفواتير المعلقة (Park Sale)
+    public function loadSuspendedCarts()
+    {
+        $this->suspendedCarts = \App\Models\SuspendedCart::where('user_id', auth()->id() ?? 1)
+            ->with('customer')->latest()->get();
+    }
+
+    public function suspendCurrentCart()
+    {
+        if (empty($this->cart)) {
+            session()->flash('error', 'السلة فارغة، لا يمكن تعليقها!');
+            return;
+        }
+        \App\Models\SuspendedCart::create([
+            'user_id' => auth()->id() ?? 1,
+            'customer_id' => $this->selected_customer_id ?: null,
+            'cart_data' => json_encode($this->cart),
+            'discount_amount' => $this->discount_amount,
+            'payment_method' => $this->payment_method,
+            'paid_amount' => $this->paid_amount,
+        ]);
+        $this->reset(['cart', 'total_amount', 'final_total', 'discount_amount', 'paid_amount', 'selected_customer_id', 'payment_method']);
+        $this->payment_method = 'full';
+        $this->loadSuspendedCarts();
+        session()->flash('success', '🅿️ تم تعليق الفاتورة بنجاح!');
+    }
+
+    public function restoreSuspendedCart($id)
+    {
+        $suspended = \App\Models\SuspendedCart::find($id);
+        if (!$suspended) return;
+        $this->cart = json_decode($suspended->cart_data, true);
+        $this->selected_customer_id = $suspended->customer_id;
+        $this->discount_amount = $suspended->discount_amount;
+        $this->payment_method = $suspended->payment_method;
+        $this->paid_amount = $suspended->paid_amount;
+        $this->calculateTotals();
+        $suspended->delete();
+        $this->loadSuspendedCarts();
+        session()->flash('success', '🔄 تم استرجاع الفاتورة المعلقة!');
+    }
+
+    public function deleteSuspendedCart($id)
+    {
+        \App\Models\SuspendedCart::find($id)?->delete();
+        $this->loadSuspendedCarts();
+        session()->flash('success', '🗑️ تم إلغاء الفاتورة المعلقة.');
+    }
 };
 ?>
 
@@ -536,11 +643,10 @@ new class extends Component
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <label class="mb-0 fw-bold text-dark">🔍 مسح وقراءة الباركود (امسح قطعة او كرتونة واضغط Enter)</label>
                         <div class="d-flex gap-2">
-                            <button type="button" class="btn btn-sm btn-outline-primary fw-bold" data-bs-toggle="modal" data-bs-target="#quickItemModal">
-                                ➕ خدمة / مبيعات سريعة يدوية
+                            <button type="button" id="quick-item-btn" class="btn btn-sm btn-outline-primary fw-bold" data-bs-toggle="modal" data-bs-target="#quickItemModal" title="اختصار: F11">
+                                ➕ خدمة / مبيعات سريعة
                             </button>
-                            {{-- زر ادارة المفضلات --}}
-                            <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-outline-danger fw-bold">
+                            <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-outline-danger fw-bold" title="فتح/إغلاق الإدارة">
                                 ⭐ ادارة المفضلات
                             </button>
                         </div>
@@ -548,6 +654,7 @@ new class extends Component
 
                     <div class="position-relative">
                         <input type="text"
+                               id="barcode-input"
                                wire:model.live="barcode"
                                wire:keydown.enter="scanBarcode"
                                wire:keydown.arrow-down.prevent="highlightNext"
@@ -555,7 +662,8 @@ new class extends Component
                                class="form-control form-control-lg text-start font-monospace"
                                placeholder="امسح بالليزر او اكتب هنا للبحث السريع..."
                                autocomplete="off"
-                               autofocus>
+                               autofocus
+                               title="اختصار: F10 للعودة هنا">
 
                         @if (count($suggestions) > 0)
                             <div class="list-group position-absolute w-100 shadow-lg" style="z-index: 1050; max-height: 320px; overflow-y: auto;">
@@ -585,15 +693,13 @@ new class extends Component
                 </div>
             </div>
 
-            {{-- ═══════════════════════════════════════════════ --}}
-            {{-- قسم المفضلات - مربعات سريعة الاضافة --}}
-            {{-- ═══════════════════════════════════════════════ --}}
+            {{-- قسم المفضلات --}}
             @if (count($favorites) > 0)
                 <div class="card mb-3 shadow-sm border-0">
                     <div class="card-header bg-white border-0 py-2 d-flex justify-content-between align-items-center">
                         <h6 class="fw-bold mb-0 text-danger">
                             ⭐ السلع والخدمات المفضلة (غير المخزنة)
-                            <span class="small text-muted fw-normal">— اضغط + لاضافة للسلة فوراً</span>
+                            <span class="small text-muted fw-normal">— اضغط على المربع لإضافته للسلة فوراً</span>
                         </h6>
                         <span class="badge bg-danger-subtle text-danger">{{ count($favorites) }} عنصر</span>
                     </div>
@@ -601,16 +707,12 @@ new class extends Component
                         <div class="row g-2">
                             @foreach ($favorites as $fav)
                                 <div class="col-6 col-sm-4 col-md-3">
-                                    <div class="favorite-card" style="--fav-color: {{ $fav->color }}">
+                                    {{-- جعل المربع بالكامل قابل للنقر عبر wire:click --}}
+                                    <div wire:click="addFavoriteToCart({{ $fav->id }})" wire:loading.attr="disabled" class="favorite-card" style="--fav-color: {{ $fav->color }}">
                                         <div class="favorite-icon">{{ $fav->icon }}</div>
                                         <div class="favorite-name">{{ $fav->name }}</div>
                                         <div class="favorite-price">{{ number_format($fav->price, 2) }} دج</div>
-                                        <button type="button"
-                                                wire:click="addFavoriteToCart({{ $fav->id }})"
-                                                class="favorite-add-btn"
-                                                title="اضافة للسلة">
-                                            <span>+</span>
-                                        </button>
+                                        <div class="click-overlay"><i class="bi bi-plus-lg"></i></div>
                                     </div>
                                 </div>
                             @endforeach
@@ -619,9 +721,7 @@ new class extends Component
                 </div>
             @endif
 
-            {{-- ═══════════════════════════════════════════════ --}}
             {{-- نافذة ادارة المفضلات --}}
-            {{-- ═══════════════════════════════════════════════ --}}
             @if ($showFavoritesManager)
                 <div class="card mb-3 shadow-sm border-danger">
                     <div class="card-header bg-danger text-white py-2 d-flex justify-content-between align-items-center">
@@ -629,7 +729,6 @@ new class extends Component
                         <button type="button" wire:click="toggleFavoritesManager" class="btn btn-sm btn-light">✕ اغلاق</button>
                     </div>
                     <div class="card-body">
-                        {{-- نموذج اضافة/تعديل --}}
                         <div class="row g-2 mb-3 p-2 bg-light rounded-3">
                             <div class="col-md-3">
                                 <label class="form-label small fw-bold">الاسم <span class="text-danger">*</span></label>
@@ -660,7 +759,6 @@ new class extends Component
                             </div>
                         </div>
 
-                        {{-- جدول المفضلات --}}
                         <div class="table-responsive">
                             <table class="table table-sm table-hover align-middle text-center small mb-0">
                                 <thead class="table-light">
@@ -723,16 +821,14 @@ new class extends Component
                                 <tr class="{{ ($item['is_custom'] ?? false) ? 'table-warning' : '' }}">
                                     <td class="text-start fw-bold text-dark">
                                         {{ $item['name'] }}
-                                        {{-- 🛠️ FIX: استخدام ?? false بدلاً من الوصول المباشر --}}
                                         @if($item['is_favorite'] ?? false)
                                             <span class="badge bg-danger text-white text-xs ms-1">⭐ مفضل</span>
-                                        @elseif($item['is_custom'] ?? false)
-                                            <span class="badge bg-warning text-dark text-xs ms-1">يدوي</span>
                                         @endif
                                     </td>
                                     <td class="font-monospace">{{ number_format($item['price'], 2) }}</td>
                                     <td style="max-width:85px">
                                         <input type="number"
+                                               id="qty-input-{{ $loop->index }}"
                                                value="{{ $item['quantity'] }}"
                                                wire:input.debounce.150ms="updateQuantity('{{ $key }}', $event.target.value)"
                                                class="form-control form-control-sm text-center font-monospace" min="1">
@@ -764,7 +860,7 @@ new class extends Component
                         </div>
                         <div class="col-6">
                             <label class="small fw-bold text-secondary">📉 قيمة التخفيض الفوري (دج):</label>
-                            <input type="number" wire:model.live="discount_amount" wire:change="calculateTotals" class="form-control form-control-sm font-monospace text-center fw-bold text-danger" min="0">
+                            <input type="number" id="discount-input" wire:model.live="discount_amount" wire:change="calculateTotals" class="form-control form-control-sm font-monospace text-center fw-bold text-danger" min="0">
                         </div>
                     </div>
 
@@ -810,15 +906,52 @@ new class extends Component
                         </div>
                     </div>
 
-                    <button wire:click="checkout" class="btn btn-primary w-100 btn-lg fw-bold py-2 shadow-sm">
-                        💾 ⚡ انهاء الفاتورة والترحيل الفوري
-                    </button>
+                    <div class="d-flex gap-2 mb-3">
+    <button wire:click="checkout" id="checkout-btn" class="btn btn-primary flex-grow-1 btn-lg fw-bold py-2 shadow-sm" title="اختصار: F4">
+        💾 ⚡ انهاء الفاتورة
+    </button>
+    
+   <button wire:click="suspendCurrentCart" id="suspend-btn" class="btn btn-warning btn-lg fw-bold py-2 shadow-sm" title="اختصار: F12">
+    🅿️ تعليق  
+</button>
+</div>
+
+{{-- قائمة الفواتير المعلقة --}}
+@if(isset($suspendedCarts) && count($suspendedCarts) > 0)
+    <div class="mt-3 p-2 border rounded-3 bg-light">
+        <h6 class="fw-bold text-dark mb-2 small">📌 فواتير معلقة ({{ count($suspendedCarts) }}):</h6>
+        <div class="d-flex flex-wrap gap-2">
+            @foreach($suspendedCarts as $susp)
+                <div class="p-2 bg-white border rounded shadow-sm d-flex align-items-center gap-2">
+                    <div class="small">
+                        <b>فاتورة #{{ $susp->id }}</b> <br>
+                        <span class="text-muted">{{ $susp->customer ? $susp->customer->name : 'زبون عابر' }}</span>
+                    </div>
+                    <button wire:click="restoreSuspendedCart({{ $susp->id }})" class="btn btn-success btn-sm py-1 px-2 fw-bold">استرجاع</button>
+                    <button wire:click="deleteSuspendedCart({{ $susp->id }})" class="btn btn-outline-danger btn-sm py-1 px-2">إلغاء</button>
+                </div>
+            @endforeach
+        </div>
+    </div>
+@endif
+                    
+                    {{-- بانر اختصارات لوحة المفاتيح --}}
+                    <div class="alert alert-secondary p-2 small mt-3 d-flex flex-wrap gap-2 justify-content-center align-items-center">
+                        <span class="fw-bold">⌨️ اختصارات الكاشير:</span>
+                        <span><kbd>F4</kbd> إنهاء</span>
+                        <span><kbd>F9</kbd> الأرباح</span>
+                        <span><kbd>F10</kbd> باركود</span>
+                        <span><kbd>F11</kbd> خدمة سريعة</span>
+                        <span><kbd>F12</kbd>تعليق</span>
+                        <span><kbd>*</kbd> كمية آخر سلعة</span>
+                        <span><kbd>Del</kbd> حذف الأخير</span>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- نافذة اضافة سلعة يدوية --}}
+    {{-- نافذة اضافة سلعة سريعة --}}
     <div wire:ignore.self class="modal fade" id="quickItemModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-sm">
             <div class="modal-content">
@@ -829,24 +962,86 @@ new class extends Component
                 <div class="modal-body">
                     <div class="mb-2">
                         <label class="form-label small fw-bold">البيان / الخدمة <span class="text-danger">*</span></label>
-                        <input type="text" wire:model="quick_item_name" class="form-control form-control-sm" placeholder="مثال: فوتوكوبي مستندات">
+                        <input type="text" id="quick-item-name-input" wire:model="quick_item_name" wire:keydown.enter="$nextTick(() => document.getElementById('quick-item-price-input').focus())" class="form-control form-control-sm" placeholder="مثال: فوتوكوبي مستندات">
                         @error('quick_item_name') <span class="text-danger small">{{ $message }}</span> @enderror
                     </div>
                     <div class="row g-2">
                         <div class="col-6">
                             <label class="form-label small fw-bold">السعر المفرد</label>
-                            <input type="number" step="0.01" wire:model="quick_item_price" class="form-control form-control-sm text-center font-monospace" min="0">
+                            <input type="number" id="quick-item-price-input" step="0.01" wire:model="quick_item_price" wire:keydown.enter="addQuickItem" class="form-control form-control-sm text-center font-monospace" min="0">
                             @error('quick_item_price') <span class="text-danger small">{{ $message }}</span> @enderror
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold">الكمية المطلوبة</label>
-                            <input type="number" wire:model="quick_item_qty" class="form-control form-control-sm text-center font-monospace" min="1">
+                            <input type="number" wire:model="quick_item_qty" wire:keydown.enter="addQuickItem" class="form-control form-control-sm text-center font-monospace" min="1">
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer p-2">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">الغاء</button>
                     <button type="button" wire:click="addQuickItem" class="btn btn-primary btn-sm fw-bold">ادراج بالسلة</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {{-- نافذة تفاصيل الأرباح المتوقعة (F9) --}}
+    <div class="modal fade" id="profitModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-md">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white py-2">
+                    <h6 class="fw-bold mb-0">💰 تفاصيل الأرباح المتوقعة للفاتورة الحالية</h6>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive mb-3" style="max-height: 300px; overflow-y: auto;">
+                        <table class="table table-sm table-bordered text-center align-middle small mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="text-start">السلعة</th>
+                                    <th>الكمية</th>
+                                    <th>التكلفة (مفرق)</th>
+                                    <th>البيع (مفرق)</th>
+                                    <th>الربح الإجمالي</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse($profit_details as $detail)
+                                    <tr>
+                                        <td class="text-start">{{ $detail['name'] }}</td>
+                                        <td>{{ $detail['qty'] }}</td>
+                                        <td class="font-monospace text-secondary">{{ number_format($detail['cost'], 2) }}</td>
+                                        <td class="font-monospace">{{ number_format($detail['price'], 2) }}</td>
+                                        <td class="font-monospace fw-bold {{ $detail['profit'] > 0 ? 'text-success' : 'text-danger' }}">{{ number_format($detail['profit'], 2) }}</td>
+                                    </tr>
+                                @empty
+                                    <tr>
+                                        <td colspan="5" class="text-muted">لا توجد سلع في السلة.</td>
+                                    </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="bg-light p-2 rounded">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="fw-bold text-secondary">إجمالي رأس المال:</span>
+                            <b class="font-monospace text-dark">{{ number_format($total_capital, 2) }} دج</b>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="fw-bold text-success">صافي الأرباح المتوقعة:</span>
+                            {{-- 1. تصبح باللون الأحمر إذا كانت الأرباح 0 أو أقل --}}
+                            <b class="font-monospace {{ $total_profit > 0 ? 'text-success' : 'text-danger' }}">{{ number_format($total_profit, 2) }} دج</b>
+                        </div>
+                        <hr class="my-1">
+                        <div class="d-flex justify-content-between p-1 bg-dark text-white rounded">
+                            <span class="fw-bold">إجمالي قيمة الفاتورة:</span>
+                            <b class="font-monospace">{{ number_format($final_total, 2) }} دج</b>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer p-2">
+                    <button type="button" class="btn btn-success btn-sm w-100 fw-bold" data-bs-dismiss="modal">ممتاز، إتمام البيع</button>
                 </div>
             </div>
         </div>
@@ -862,25 +1057,104 @@ new class extends Component
         document.addEventListener('livewire:init', () => {
             Livewire.on('close-modal', (event) => {
                 const modalElement = document.getElementById(event.modalId);
-                const modalInstance = bootstrap.Modal.getInstance(modalElement);
-                if (modalInstance) { modalInstance.hide(); }
+                if(modalElement) {
+                    const modalInstance = bootstrap.Modal.getInstance(modalElement);
+                    if (modalInstance) { modalInstance.hide(); }
+                }
             });
+
+            Livewire.on('show-profit-modal', () => {
+                const modalElement = document.getElementById('profitModal');
+                if(modalElement) {
+                    const modalInstance = new bootstrap.Modal(modalElement);
+                    modalInstance.show();
+                }
+            });
+            // إجبار المؤشر على الدخول لخانة "البيان / الخدمة" عند فتح نافذة الإضافة السريعة
+    const quickModal = document.getElementById('quickItemModal');
+    if (quickModal) {
+        quickModal.addEventListener('shown.bs.modal', function () {
+            const nameInput = document.getElementById('quick-item-name-input');
+            if (nameInput) {
+                nameInput.focus();
+            }
+        });
+    }
+        });
+
+        // اختصارات لوحة المفاتيح للكاشير
+        document.addEventListener('keydown', function(e) {
+            const isTyping = ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+            const activeElement = e.target;
+
+            // F4 - إنهاء الفاتورة
+            if (e.key === 'F4') {
+                e.preventDefault();
+                Livewire.dispatch('shortcut-checkout');
+            } 
+            // F9 - إظهار تفاصيل الأرباح المتوقعة
+            else if (e.key === 'F9') {
+                e.preventDefault();
+                Livewire.dispatch('showProfits');
+            } 
+                        // F12 - تعليق الفاتورة الحالية
+            else if (e.key === 'F12') {
+                e.preventDefault();
+                const suspendBtn = document.getElementById('suspend-btn');
+                if (suspendBtn) suspendBtn.click();
+            }
+            // F10 - إرسال المؤشر للباركود
+            else if (e.key === 'F10') {
+                e.preventDefault();
+                const barcodeInput = document.getElementById('barcode-input');
+                if (barcodeInput) {
+                    barcodeInput.focus();
+                    barcodeInput.select();
+                }
+            } 
+            // F11 - فتح نافذة الإضافة السريعة وتوجيه المؤشر لاسم السلعة
+            else if (e.key === 'F11') {
+                e.preventDefault();
+                const quickBtn = document.getElementById('quick-item-btn');
+                if (quickBtn) quickBtn.click();
+                // تأخير بسيط لانتظار فتح النافذة ثم توجيه المؤشر
+                setTimeout(() => {
+                    const nameInput = document.getElementById('quick-item-name-input');
+                    if (nameInput) nameInput.focus();
+                }, 300);
+            } 
+            // علامة النجمة (*) - التركيز على كمية آخر سلعة مضافة (وليست الأولى)
+            else if (e.key === '*') {
+                e.preventDefault();
+                const qtyInputs = document.querySelectorAll('[id^="qty-input-"]');
+                if (qtyInputs.length > 0) {
+                    const lastQtyInput = qtyInputs[qtyInputs.length - 1]; // جلب آخر عنصر
+                    lastQtyInput.focus();
+                    lastQtyInput.select();
+                }
+            } 
+            // Suppr (Delete) - حذف آخر عنصر مع رسالة تأكيد
+            else if (e.key === 'Delete') {
+                // إذا كان المؤشر في حقل فارغ أو ليس بحقل نصي، قم بتنفيذ الحذف
+                if (!isTyping || activeElement.value === '') {
+                    e.preventDefault();
+                    if (confirm('⚠️ هل أنت متأكد من حذف آخر عنصر أضيف للسلة؟')) {
+                        Livewire.dispatch('deleteLastItem');
+                    }
+                }
+            }
         });
     </script>
 
     <script src="{{ asset('js/print-invoice.js') }}"></script>
 
-    {{-- ═══════════════════════════════════════════════ --}}
-    {{-- انماط CSS خاصة ببطاقات المفضلات --}}
-    {{-- ═══════════════════════════════════════════════ --}}
     <style>
-        /* بطاقة المفضلة */
         .favorite-card {
             position: relative;
             background: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
             border: 2px solid var(--fav-color, #872061);
             border-radius: 12px;
-            padding: 12px 8px 8px;
+            padding: 15px 10px; /* تعديل الحواف الداخلية */
             text-align: center;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -891,6 +1165,7 @@ new class extends Component
             align-items: center;
             justify-content: center;
             overflow: hidden;
+            user-select: none;
         }
         .favorite-card:hover {
             transform: translateY(-3px);
@@ -922,37 +1197,30 @@ new class extends Component
             color: var(--fav-color, #872061);
             font-family: monospace;
         }
-        .favorite-add-btn {
+        
+        /* كلاس تأثير ظهور علامة + عند الضغط على المربع بالكامل */
+        .click-overlay {
             position: absolute;
-            top: 4px;
-            left: 4px;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            background: var(--fav-color, #872061);
-            color: #fff;
-            border: none;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.7);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1rem;
+            font-size: 3rem;
             font-weight: bold;
-            line-height: 1;
-            cursor: pointer;
-            transition: all 0.15s ease;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-            z-index: 2;
+            color: var(--fav-color, #872061);
+            opacity: 0;
+            transition: opacity 0.1s;
+            pointer-events: none; /* لضمان عدم إعاقة النقر */
         }
-        .favorite-add-btn:hover {
-            transform: scale(1.15);
-            box-shadow: 0 3px 10px rgba(0,0,0,0.3);
-        }
-        .favorite-add-btn span {
-            display: block;
-            margin-top: -1px;
+        .favorite-card:active .click-overlay {
+            opacity: 1;
+            transform: scale(1.2);
         }
 
-        /* معاينة اللون في الجدول */
         .color-preview {
             display: inline-block;
             width: 18px;
@@ -962,8 +1230,6 @@ new class extends Component
             vertical-align: middle;
             margin-left: 4px;
         }
-
-        /* شارة المفضلة في السلة */
         .badge.bg-danger.text-white {
             background: linear-gradient(135deg, #e74c3c, #c0392b) !important;
         }

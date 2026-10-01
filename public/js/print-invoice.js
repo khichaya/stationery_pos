@@ -65,8 +65,6 @@ function numberToArabicWords(number) {
     return resultParts.join(' و');
 }
 
-// 🆕 يجمع الجزء الصحيح بالأحرف + "دج" + السنتيمات كأرقام (مو بالأحرف)
-// مثال: 2650.03 -> "ألفان وستمائة وخمسون دج و 03 سنتيم"
 function formatAmountInWords(amount) {
     amount = parseFloat(amount) || 0;
     const wholePart = Math.floor(amount);
@@ -81,36 +79,30 @@ function printInvoice(size) {
     if (!dataEl) { alert('لا توجد فاتورة لطباعتها.'); return; }
     const sale = JSON.parse(dataEl.textContent);
 
+    const isA6 = size === 'A6';
+    const isA5 = size === 'A5';
+    
     const pageSizes = {
-        'A4': { css: '210mm 297mm', width: 800, padding: '20mm', minHeight: '257mm' },
-        'A5': { css: '148mm 210mm', width: 560, padding: '15mm', minHeight: '180mm' },
-        'A6': { css: '105mm 148mm', width: 380, padding: '8mm', minHeight: '132mm' },
+        'A4': { css: '210mm 297mm', width: 800, padding: '15mm', minHeight: '267mm' },
+        'A5': { css: '148mm 210mm', width: 560, padding: '10mm', minHeight: '190mm' },
+        // ✅ إعطاء عرض 82mm لضمان عدم قطع الأسعار، والطول auto لمنع القص المزدوج
+        'A6': { css: '82mm auto', width: 380, padding: '3mm', minHeight: '0' }, 
     };
     const cfg = pageSizes[size] || pageSizes['A4'];
 
     let rows = '';
     sale.items.forEach((item, index) => {
         rows += `
-            <tr>
-                <td style="text-align:center; width:10%; border:1px solid #333; padding:6px;">${index + 1}</td>
-                <td style="text-align:right; border:1px solid #333; padding:6px;">${item.name}${item.is_custom ? ' <span style="font-size:0.85em;">(يدوي)</span>' : ''}</td>
-                <td style="text-align:center; width:12%; border:1px solid #333; padding:6px;">${item.quantity}</td>
-                <td style="text-align:center; width:15%; border:1px solid #333; padding:6px;">${parseFloat(item.price).toFixed(2)}</td>
-                <td style="text-align:center; width:18%; border:1px solid #333; padding:6px; font-weight:bold;">${parseFloat(item.subtotal).toFixed(2)}</td>
-            </tr>`;
+            <div class="item-row">
+                <div class="item-header">
+                    <span class="item-name">${item.name}</span>
+                    <span class="item-total">${parseFloat(item.subtotal).toFixed(2)}</span>
+                </div>
+                <div class="item-details">
+                    ${item.quantity} × ${parseFloat(item.price).toFixed(2)} دج
+                </div>
+            </div>`;
     });
-
-    const minRows = size === 'A4' ? 12 : size === 'A5' ? 8 : 5;
-    for (let i = sale.items.length; i < minRows; i++) {
-        rows += `
-            <tr>
-                <td style="border:1px solid #333; padding:6px;">&nbsp;</td>
-                <td style="border:1px solid #333; padding:6px;">&nbsp;</td>
-                <td style="border:1px solid #333; padding:6px;">&nbsp;</td>
-                <td style="border:1px solid #333; padding:6px;">&nbsp;</td>
-                <td style="border:1px solid #333; padding:6px;">&nbsp;</td>
-            </tr>`;
-    }
 
     const printWindow = window.open('', '_blank', `width=${cfg.width},height=900`);
     printWindow.document.write(`
@@ -128,264 +120,171 @@ function printInvoice(size) {
                     box-sizing: border-box;
                     margin: 0;
                     padding: 0;
+                    -webkit-print-color-adjust: exact !important;
+                    print-color-adjust: exact !important;
                 }
+                
+                /* ✅ إزالة overflow: hidden لمنع قطع النصوص */
+                html, body {
+                    width: 100%;
+                    height: auto;
+                }
+                
                 body {
                     direction: rtl;
                     margin: 0;
-                    padding: ${cfg.padding};
+                    padding: ${isA6 ? '3mm' : cfg.padding};
                     color: #000;
                     background: #fff;
-                    font-size: ${size === 'A6' ? '10px' : size === 'A5' ? '11px' : '13px'};
-                    min-height: ${cfg.minHeight};
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: space-between;
+                    font-size: ${isA6 ? '10px' : isA5 ? '13px' : '15px'};
+                    ${!isA6 ? `min-height: ${cfg.minHeight}; display: flex; flex-direction: column; justify-content: space-between;` : ''}
                 }
 
-                .invoice-header {
-                    text-align: center;
-                    border-bottom: 2px solid #000;
-                    padding-bottom: 10px;
-                    margin-bottom: 12px;
+                /* === الهيدر === */
+                .invoice-header { text-align: center; margin-bottom: 8px; }
+                
+                .logo-img {
+                    width: ${isA6 ? '150px' : '200px'} !important; 
+                    height: ${isA6 ? '150px' : '200px'} !important;
+                    object-fit: contain !important;
+                    margin: 0 auto 8px auto !important; 
+                    display: block !important;
                 }
-                .invoice-header .logo-section {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    gap: 12px;
-                    margin-bottom: 6px;
-                }
-                .invoice-header .logo-img {
-                    width: ${size === 'A6' ? '45px' : '60px'};
-                    height: ${size === 'A6' ? '45px' : '60px'};
-                    object-fit: contain;
-                }
-                .invoice-header .company-name {
-                    font-size: ${size === 'A6' ? '18px' : size === 'A5' ? '22px' : '28px'};
-                    font-weight: 900;
-                    color: #000;
-                    margin: 0;
-                    letter-spacing: 1px;
-                }
-                .invoice-header .company-info {
-                    font-size: ${size === 'A6' ? '9px' : '11px'};
-                    color: #333;
-                    margin-top: 3px;
-                    line-height: 1.5;
-                }
-                .invoice-header .tax-info {
-                    font-size: ${size === 'A6' ? '8px' : '10px'};
-                    color: #555;
-                    margin-top: 5px;
-                    padding-top: 5px;
-                    border-top: 1px dashed #999;
+                
+                .company-name { font-size: ${isA6 ? '18px' : '28px'}; font-weight: 900; line-height: 1.2; }
+                .company-info { font-size: ${isA6 ? '9px' : '13px'}; color: #333; line-height: 1.5; margin-top: 4px; }
+                .tax-info {
+                    font-size: ${isA6 ? '8px' : '12px'}; color: #555; margin-top: 6px; padding-top: 6px;
+                    border-top: 1px dashed #000; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
                 }
 
+                /* === معلومات الفاتورة === */
                 .invoice-meta {
-                    display: flex;
-                    justify-content: space-between;
-                    background: #f5f5f5;
-                    padding: 8px 10px;
-                    border: 1px solid #333;
-                    margin-bottom: 12px;
-                }
-                .invoice-meta .meta-item {
-                    font-size: ${size === 'A6' ? '9px' : '11px'};
-                }
-                .invoice-meta .meta-label {
-                    font-weight: 800;
+                    display: flex; justify-content: space-between; font-size: ${isA6 ? '9px' : '13px'};
+                    font-weight: 700; border-top: 2px solid #000; border-bottom: 2px solid #000;
+                    padding: 4px 0; margin-bottom: 8px;
                 }
 
-                table {
-                    width: 100%;
-                    border-collapse: collapse;
-                    margin-bottom: 12px;
-                    flex-grow: 1;
+                /* === قائمة السلع === */
+                .item-row { border-bottom: 1px dashed #ccc; padding: 4px 0; }
+                
+                /* ✅ ضمان بقاء السلعة والسعر في سطر واحد دون قطع */
+                .item-header {
+                    display: flex; 
+                    justify-content: space-between; 
+                    align-items: center;
+                    font-weight: 700;
+                    font-size: ${isA6 ? '11px' : '14px'};
+                    gap: 5px;
                 }
-                thead {
-                    background: #e0e0e0;
+                .item-name {
+                    flex: 1; /* يأخذ المساحة المتبقية */
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis; /* يضع ... إذا كان الاسم طويلاً جداً بدل قطع السعر */
                 }
-                th {
-                    border: 1px solid #333;
-                    padding: ${size === 'A6' ? '5px' : '8px'};
-                    text-align: center;
-                    font-weight: 800;
-                    font-size: ${size === 'A6' ? '9px' : '11px'};
+                .item-total {
+                    white-space: nowrap; /* يمنع السعر من النزول لسطر جديد */
                 }
-                td {
-                    border: 1px solid #333;
-                    padding: ${size === 'A6' ? '4px' : '6px'};
+                
+                .item-details { font-size: ${isA6 ? '8px' : '12px'}; color: #666; margin-top: 2px; }
+
+                /* === الإجماليات === */
+                .totals-section { border-top: 2px solid #000; margin-top: 8px; padding-top: 8px; }
+                .total-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: ${isA6 ? '10px' : '14px'}; }
+                .grand-total {
+                    display: flex; justify-content: space-between; align-items: center; background: #000; color: #fff;
+                    padding: 6px 10px; margin: 8px 0; font-size: ${isA6 ? '15px' : '22px'}; font-weight: 900; border-radius: 4px;
+                }
+                .words-row {
+                    padding: 4px 0; border-top: 1px dashed #999; border-bottom: 1px dashed #999; margin: 8px 0;
+                    font-size: ${isA6 ? '9px' : '13px'} !important; font-weight: 700; text-align: center;
                 }
 
-                .totals-section {
-                    border: 2px solid #000;
-                    padding: 10px;
-                    margin-top: 10px;
-                    background: #fafafa;
-                }
-                .totals-section .total-row {
-                    display: flex;
-                    justify-content: space-between;
-                    padding: 3px 0;
-                    font-size: ${size === 'A6' ? '10px' : '12px'};
-                }
-                .totals-section .grand-total {
-                    display: flex;
-                    justify-content: space-between;
-                    padding: 6px 0;
-                    margin-top: 4px;
-                    border-top: 2px solid #000;
-                    font-size: ${size === 'A6' ? '14px' : size === 'A5' ? '16px' : '20px'};
-                    font-weight: 900;
-                }
-                .totals-section .debt-row {
-                    display: flex;
-                    justify-content: space-between;
-                    padding: 3px 0;
-                    color: #c00;
-                    font-weight: 800;
-                    font-size: ${size === 'A6' ? '10px' : '12px'};
-                }
-                .totals-section .paid-row {
-                    display: flex;
-                    justify-content: space-between;
-                    padding: 3px 0;
-                    color: #080;
-                    font-weight: 800;
-                }
+                /* === التوقيع === */
+                .signature-section { text-align: left; margin-top: ${isA6 ? '12px' : '20px'}; margin-bottom: ${isA6 ? '12px' : '20px'}; }
+                .sig-line { border-top: 1px solid #000; padding-top: 4px; font-size: ${isA6 ? '9px' : '13px'}; text-align: center; width: 120px; display: inline-block; }
 
-                .signature-section {
-                    margin-top: 20px;
-                    text-align: left;
-                }
-                .signature-section .sig-box {
-                    display: inline-block;
-                    text-align: center;
-                    width: 150px;
-                }
-                .signature-section .sig-line {
-                    border-top: 1px solid #000;
-                    margin-top: 30px;
-                    padding-top: 4px;
-                    font-size: ${size === 'A6' ? '9px' : '11px'};
-                }
-
-                .invoice-footer {
-                    margin-top: 15px;
-                    text-align: center;
-                    padding: 10px;
-                    border: 1px solid #333;
-                    background: #f9f9f9;
-                }
-                .invoice-footer .footer-text {
-                    font-size: ${size === 'A6' ? '9px' : '11px'};
-                    color: #333;
-                    line-height: 1.6;
-                }
-                .invoice-footer .thanks {
-                    font-size: ${size === 'A6' ? '11px' : '13px'};
-                    font-weight: 800;
-                    margin-top: 6px;
-                    color: #000;
-                }
+                /* === الفوتر === */
+                .invoice-footer { text-align: center; border-top: 2px dashed #000; padding-top: 8px; }
+                .footer-text { font-size: ${isA6 ? '9px' : '13px'}; color: #333; line-height: 1.4; margin-bottom: 6px; font-weight: 600; }
+                .thanks { font-size: ${isA6 ? '13px' : '20px'}; font-weight: 900; padding: 6px; border: 1px solid #000; border-radius: 4px; display: inline-block; }
             </style>
         </head>
         <body>
 
            <div class="invoice-header">
-                <div class="logo-section" style="display:flex; align-items:center; justify-content:center; gap:15px; margin-bottom:8px;">
-                    ${sale.company_logo_base64 ?
-                        `<img src="${sale.company_logo_base64}"
-                              style="width:${size === 'A6' ? '50px' : '70px'};
-                                     height:${size === 'A6' ? '50px' : '70px'};
-                                     object-fit:contain;
-                                     border-radius:6px;">` :
-                        `<div style="font-size:${size === 'A6' ? '35px' : '50px'};">📚</div>`
-                    }
-                    <div>
-                        <div class="company-name" style="font-size:${size === 'A6' ? '18px' : size === 'A5' ? '22px' : '28px'}; font-weight:900; color:#000;">${sale.company_name || 'مكتبة السلام'}</div>
-                        <div style="font-size:${size === 'A6' ? '9px' : '11px'}; color:#333; margin-top:3px; line-height:1.5;">
-                            ${sale.company_address ? `📍 ${sale.company_address}<br>` : ''}
-                            ${sale.company_phone ? `📞 ${sale.company_phone}` : ''}
-                        </div>
-                    </div>
+                ${sale.company_logo_base64 ?
+                    `<img src="${sale.company_logo_base64}" class="logo-img">` :
+                    `<div style="font-size:${isA6 ? '40px' : '50px'}; margin-bottom: 8px;">📚</div>`
+                }
+                <div class="company-name">${sale.company_name || 'مكتبة السلام'}</div>
+                <div class="company-info">
+                    ${sale.company_address ? `${sale.company_address}<br>` : ''}
+                    ${sale.company_phone ? `هاتف: ${sale.company_phone}` : ''}
                 </div>
-                <div style="font-size:${size === 'A6' ? '8px' : '10px'}; color:#555; margin-top:5px; padding-top:5px; border-top:1px dashed #999;">
-                    ${sale.company_nif ? `<strong>NIF:</strong> ${sale.company_nif} | ` : ''}
-                    ${sale.company_nis ? `<strong>NIS:</strong> ${sale.company_nis} | ` : ''}
-                    ${sale.company_rc ? `<strong>RC:</strong> ${sale.company_rc} | ` : ''}
-                    ${sale.company_ai ? `<strong>Art:</strong> ${sale.company_ai}` : ''}
+                <div class="tax-info">
+                    ${sale.company_nif ? `<span>NIF: ${sale.company_nif}</span>` : ''}
+                    ${sale.company_nis ? `<span>NIS: ${sale.company_nis}</span>` : ''}
+                    ${sale.company_rc ? `<span>RC: ${sale.company_rc}</span>` : ''}
+                    ${sale.company_ai ? `<span>AI: ${sale.company_ai}</span>` : ''}
                 </div>
             </div>
 
             <div class="invoice-meta">
-                <div class="meta-item">
-                    <span class="meta-label">فاتورة رقم:</span> #${sale.id}
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">التاريخ:</span> ${sale.date}
-                </div>
-                <div class="meta-item">
-                    <span class="meta-label">الزبون:</span> ${sale.customer}
-                </div>
+                <div>فاتورة: #${sale.id}</div>
+                <div>${sale.date}</div>
+                <div>${sale.customer}</div>
             </div>
 
-            <table>
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>البيان / الوصف</th>
-                        <th>الكمية</th>
-                        <th>السعر</th>
-                        <th>المجموع</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${rows}
-                </tbody>
-            </table>
+            <div class="items-list">
+                ${rows}
+            </div>
 
             <div class="totals-section">
                 <div class="total-row">
                     <span>الإجمالي الأولي:</span>
-                    <span style="font-weight:600;">${parseFloat(sale.total_amount).toFixed(2)} دج</span>
+                    <span>${parseFloat(sale.total_amount).toFixed(2)} دج</span>
                 </div>
-                <div class="total-row">
-                    <span>التخفيض التجاري:</span>
-                    <span style="color:#c00;">-${parseFloat(sale.discount_amount).toFixed(2)} دج</span>
+                ${sale.discount_amount > 0 ? `
+                <div class="total-row" style="color: #c00;">
+                    <span>التخفيض:</span>
+                    <span>-${parseFloat(sale.discount_amount).toFixed(2)} دج</span>
                 </div>
+                ` : ''}
+                
                 <div class="grand-total">
-                    <span>الصافي الإجمالي</span>
+                    <span>الإجمالي المطلوب</span>
                     <span>${parseFloat(sale.final_total).toFixed(2)} دج</span>
                 </div>
+
                 ${sale.paid_amount > 0 ? `
-                <div class="paid-row">
-                    <span>المبلغ المدفوع كاش:</span>
+                <div class="total-row" style="color: #080; font-weight: 800;">
+                    <span>المدفوع كاش:</span>
                     <span>${parseFloat(sale.paid_amount).toFixed(2)} دج</span>
                 </div>
                 ` : ''}
-                <div class="words-row" style="padding: 6px 0; border-top: 1px dashed #999; margin-top: 4px; font-size: ${size === 'A6' ? '9px' : '11px'}; font-weight: 700;">
-                    أوقفت هذه الفاتورة على مبلغ: ${formatAmountInWords(sale.final_total)}
-                </div>
                 ${sale.debt > 0 ? `
-                <div class="debt-row">
-                    <span>المبلغ المتبقي (دين):</span>
+                <div class="total-row" style="color: #c00; font-weight: 800;">
+                    <span>المتبقي (دين):</span>
                     <span>${parseFloat(sale.debt).toFixed(2)} دج</span>
                 </div>
                 ` : ''}
+
+                <div class="words-row">
+                    أوقفت هذه الفاتورة على مبلغ: ${formatAmountInWords(sale.final_total)}
+                </div>
             </div>
 
             <div class="signature-section">
-                <div class="sig-box">
-                    <div class="sig-line">التوقيع والختم</div>
-                </div>
+                <div class="sig-line">التوقيع والختم</div>
             </div>
 
             <div class="invoice-footer">
                 <div class="footer-text">
                     ${sale.company_footer || 'السلع المباعة لا ترد ولا تستبدل بعد 24 ساعة من تاريخ الشراء'}
                 </div>
-                <div class="thanks">🌟 ${sale.company_name || 'مكتبة الــــــــــــــسلام'} 🌟</div>
+                <div class="thanks">🌟 شكراً لزيارتكم 🌟</div>
             </div>
 
         </body>
